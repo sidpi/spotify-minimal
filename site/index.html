@@ -307,6 +307,9 @@ function initPlayer(accessToken) {
     player.addListener("authentication_error", () =>
       setStatus("Auth error — reconnect", true));
     player.addListener("account_error", () => setStatus("Spotify Premium required", true));
+    player.addListener("not_ready", () => setStatus("player disconnected", true));
+    player.addListener("playback_error", (e) =>
+      setStatus("playback error: " + ((e && e.message) || "unknown"), true));
     player.connect();
   };
   if (window.Spotify) window.onSpotifyWebPlaybackSDKReady();
@@ -331,26 +334,45 @@ async function refreshNowPlaying() {
 setInterval(refreshNowPlaying, 10000);
 
 // ---------------------------------------------------------------------------
+// Autoplay handling
+// ---------------------------------------------------------------------------
+// Chrome/Edge suspend the SDK's audio element after ~10s if playback was
+// started without a direct SDK call inside the user's click gesture. After a
+// REST-started playback we wait for the SDK to receive the new state, then
+// resume it directly — all within the browser's transient-activation window.
+async function ensureSdkResumed() {
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    try {
+      const st = await player.getCurrentState();
+      if (st && st.track_window && st.track_window.current_track) {
+        if (st.paused) await player.resume().catch(() => {});
+        return;
+      }
+    } catch (e) { /* player not ready yet */ }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Controls
 // ---------------------------------------------------------------------------
 playBtn.addEventListener("click", async () => {
   if (!player) return;
   const s = await player.getCurrentState();
-  if (!s) {
-    // Nothing loaded yet — start the playlist server-side on this device.
-    // connect() inside the click gesture is the documented fix for Chrome's
-    // autoplay policy, which otherwise silences the SDK audio after ~10s.
-    setStatus("starting playlist…");
-    try {
-      await player.connect().catch(() => {});
-      const r = await api("/control/play", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_id: deviceId }),
-      });
-      if (r && r.error) throw new Error(r.error);
-      player.resume().catch(() => {});
-    } catch (e) {
+  if (!s) {      // Nothing loaded yet — start the playlist server-side on this device.
+      // connect() inside the click gesture grants autoplay activation.
+      setStatus("starting playlist…");
+      try {
+        await player.connect().catch(() => {});
+        const r = await api("/control/play", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ device_id: deviceId }),
+        });
+        if (r && r.error) throw new Error(r.error);
+        await ensureSdkResumed();
+      } catch (e) {
       const msg = String((e && e.message) || e);
       setStatus(
         msg.includes("404") || msg.includes("active device")
@@ -416,7 +438,7 @@ async function startPlaylist(id, name) {
       }),
     });
     if (r && r.error) throw new Error(r.error);
-    player.resume().catch(() => {});
+    await ensureSdkResumed();
     meta.textContent = "playing · " + name;
     toast("playing " + name);
     plists.hidden = true;
