@@ -817,7 +817,7 @@ async function openPlaylist(p) {
   try {
     const r = await api("/player/playlist?id=" + encodeURIComponent(p.id));
     if (r && r.error) throw new Error(r.error);
-    currentPlaylist = { id: p.id, name: p.name, tracks: r.tracks || [] };
+    currentPlaylist = { id: p.id, name: p.name, tracks: r.tracks || [], listable: r.listable !== false };
     renderTracks();
     await switchView(trackView, plistView);
     setStatus("ready");
@@ -829,6 +829,22 @@ async function openPlaylist(p) {
 function renderTracks() {
   trackHead.textContent = currentPlaylist.name;
   tracks.innerHTML = "";
+  if (!currentPlaylist.listable) {
+    const box = document.createElement("div");
+    box.className = "pl-item";
+    box.style.cssText = "cursor:default;flex-direction:column;align-items:flex-start;gap:12px;padding:14px";
+    box.innerHTML =
+      "<span class=\"pl-sub\">Spotify no longer exposes the track list for playlists you don't own — you can still play it, and the \"up next\" panel will show the real songs as they play.</span>";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "link-btn";
+    btn.textContent = "▶ play this playlist";
+    btn.style.cssText = "margin-top:0;color:var(--fg);border-color:var(--dim)";
+    btn.addEventListener("click", () => playPlaylistNow(currentPlaylist));
+    box.appendChild(btn);
+    tracks.appendChild(box);
+    return;
+  }
   currentPlaylist.tracks.forEach((tr, i) => {
     const el = document.createElement("div");
     el.className = "pl-item";
@@ -865,6 +881,35 @@ async function playTrack(idx) {
     await ensureSdkResumed();
     meta.textContent = "playing · " + currentPlaylist.name;
     toast("playing " + tr.name);
+    renderQueue();
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    setStatus(
+      msg.includes("404") || msg.includes("active device")
+        ? "no active device — keep this tab open, then retry"
+        : "failed to play: " + msg,
+      true,
+    );
+  }
+}
+
+async function playPlaylistNow(p) {
+  // Play a playlist directly by URI (no track list needed). Used for
+  // playlists Spotify won't expose track lists for (others' playlists).
+  log("play playlist:", p.name);
+  setStatus("starting " + p.name + "…");
+  try {
+    await ensurePlayer();
+    const r = await api("/control/play", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: deviceId, context_uri: "spotify:playlist:" + p.id }),
+    });
+    if (r && r.error) throw new Error(r.error);
+    await ensureSdkResumed();
+    currentPlaylistName = p.name;
+    meta.textContent = "playing · " + p.name;
+    toast("playing " + p.name);
     renderQueue();
   } catch (e) {
     const msg = String((e && e.message) || e);

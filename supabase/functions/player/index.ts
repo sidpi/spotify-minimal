@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && action === "playlist") {
       const id = url.searchParams.get("id");
       if (!id) return json({ error: "id required" }, 400);
-      return json({ tracks: await getPlaylistTracks(id) });
+      return json(await getPlaylistTracks(id));
     }
 
     // ---- register the browser's Web Playback SDK device -------------------

@@ -261,9 +261,15 @@ export async function playPlaylist(
  *
  * Spotify's current API embeds the playlist items in the playlist details
  * object (top-level `items` paging object, each entry's track under `item`)
- * and the separate `/playlists/{id}/tracks` endpoint returns 403.
+ * and the separate `/playlists/{id}/tracks` endpoint returns 403. Embedded
+ * items only exist for playlists the user owns — for playlists followed from
+ * other users, Spotify returns bare metadata with no track list at all.
+ * `listable` tells the frontend which case it is.
  */
-export async function getPlaylistTracks(playlistId: string): Promise<object[]> {
+export async function getPlaylistTracks(playlistId: string): Promise<{
+  tracks: object[];
+  listable: boolean;
+}> {
   const data = await spotifyFetch(`/playlists/${playlistId}`);
   const entries: {
     item?: {
@@ -282,21 +288,24 @@ export async function getPlaylistTracks(playlistId: string): Promise<object[]> {
       duration_ms: number;
       uri: string;
     } | null;
-  }[] = data?.items?.items ?? [];
-  return entries
-    .map((entry) => {
-      const tr = entry.item ?? entry.track ?? null;
-      if (!tr) return null; // unavailable tracks come back null
-      return {
-        id: tr.id,
-        name: tr.name,
-        artists: (tr.artists ?? []).map((a) => a.name).join(", "),
-        image: tr.album?.images?.[0]?.url ?? "",
-        duration_ms: tr.duration_ms,
-        uri: tr.uri,
-      };
-    })
-    .filter((t: object | null): t is object => t !== null);
+  }[] = data?.items?.items ?? data?.tracks?.items ?? [];
+  return {
+    listable: !!(data?.items || data?.tracks),
+    tracks: entries
+      .map((entry) => {
+        const tr = entry.item ?? entry.track ?? null;
+        if (!tr) return null; // unavailable tracks come back null
+        return {
+          id: tr.id,
+          name: tr.name,
+          artists: (tr.artists ?? []).map((a) => a.name).join(", "),
+          image: tr.album?.images?.[0]?.url ?? "",
+          duration_ms: tr.duration_ms,
+          uri: tr.uri,
+        };
+      })
+      .filter((t: object | null): t is object => t !== null),
+  };
 }
 
 /** Slim shape of the user's playlists (GET /v1/me/playlists). */
