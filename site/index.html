@@ -104,8 +104,12 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .artist { color: var(--dim); margin-top: 6px; font-size: 15px; }
-  .seek {
-    width: 100%; margin-top: 30px;
+  .seek-row {
+    display: flex; align-items: center; gap: 14px;
+    margin-top: 30px;
+  }
+  .seek-row .seek {
+    flex: 1; width: auto;
     accent-color: var(--accent); cursor: pointer;
   }
   .seek:disabled { cursor: default; }
@@ -133,10 +137,6 @@
   }
   button.big:active { transform: scale(.93); }
   button.big:disabled { background: var(--border); color: var(--dim); cursor: default; }
-  .volume {
-    display: flex; align-items: center; justify-content: center;
-    margin-top: 30px; color: var(--dim); font-size: 14px;
-  }
   .vol-wrap { position: relative; display: inline-block; }
   .vol-btn {
     background: none; border: none; color: var(--dim);
@@ -146,8 +146,8 @@
   .vol-btn:hover { color: var(--fg); }
   .vol-btn:active { transform: scale(.92); }
   .vol-pop {
-    position: absolute; bottom: calc(100% + 12px); left: 50%;
-    transform: translate(-50%, 8px);
+    position: absolute; top: calc(100% + 10px); left: 50%;
+    transform: translate(-50%, -6px);
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 10px; padding: 12px 14px;
     display: flex; align-items: center; gap: 10px;
@@ -173,25 +173,11 @@
     display: flex; align-items: center; justify-content: center;
     gap: 14px; margin-top: 18px; flex-wrap: wrap;
   }
-  .mini-plists {
-    display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
-    max-height: 0; opacity: 0; transform: translateY(8px);
-    overflow: hidden; pointer-events: none;
-    transition: max-height .4s ease, opacity .3s ease, transform .3s ease;
+  #plistFocusBtn { display: none; }
+  main.focused #plistFocusBtn {
+    display: inline-block;
+    animation: viewIn .28s ease;
   }
-  main.focused .mini-plists {
-    max-height: 140px; opacity: 1; transform: none; pointer-events: auto;
-  }
-  .mini-chip {
-    background: var(--panel); border: 1px solid var(--border);
-    color: var(--dim); border-radius: 999px; padding: 6px 14px;
-    font-size: 12px; cursor: pointer;
-    white-space: nowrap; max-width: 180px;
-    overflow: hidden; text-overflow: ellipsis;
-    transition: color .15s, border-color .15s, background .15s;
-  }
-  .mini-chip:hover { color: var(--fg); border-color: var(--dim); }
-  .mini-chip.on { color: var(--accent); border-color: var(--accent); }
   .queue {
     text-align: left;
     opacity: 0; visibility: hidden; transform: translateY(6px);
@@ -317,10 +303,8 @@
       <button class="icon" id="repeat" title="Repeat off" disabled>🔁</button>
     </div>
 
-    <input type="range" class="seek" id="seek" min="0" max="1000" value="0" step="1" disabled aria-label="Seek">
-    <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
-
-    <div class="volume">
+    <div class="seek-row">
+      <input type="range" class="seek" id="seek" min="0" max="1000" value="0" step="1" disabled aria-label="Seek">
       <div class="vol-wrap">
         <button class="vol-btn" id="volBtn" type="button" title="Volume" aria-label="Volume">🔈</button>
         <div class="vol-pop">
@@ -329,6 +313,7 @@
         </div>
       </div>
     </div>
+    <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
 
     <div class="queue" id="queue">
       <div class="q-head">up next</div>
@@ -338,7 +323,7 @@
     <div class="meta" id="meta"></div>
     <div id="status"></div>
     <div class="player-foot">
-      <div class="mini-plists" id="miniPlists"></div>
+      <button class="link-btn" id="plistFocusBtn">your playlists</button>
       <button class="link-btn" id="logoutBtn" hidden>log out</button>
     </div>
   </section>
@@ -382,7 +367,7 @@ const title = $("title"), artist = $("artist"), art = $("art"),
       volume = $("volume"), volLabel = $("volLabel"),
       seek = $("seek"),
       volBtn = $("volBtn"), queue = $("queue"), qList = $("qList"),
-      miniPlists = $("miniPlists"), mainEl = document.querySelector("main"),
+      plistFocusBtn = $("plistFocusBtn"), mainEl = document.querySelector("main"),
       meta = $("meta"), statusEl = $("status"), toastEl = $("toast"),
       plistBtn = $("plistBtn"), plists = $("plists"), logoutBtn = $("logoutBtn"),
       plistView = $("plistView"), trackView = $("trackView"),
@@ -410,7 +395,6 @@ let currentPlaylist = null; // { id, name, tracks }
 let sdkNext = [];           // upcoming tracks from the SDK's track window
 let playlistOffset = -1;    // index of the last track started in currentPlaylist
 let queueItems = [];        // rendered "up next" items
-let playlistsCache = [];    // fetched playlists, for the mini chips
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -718,8 +702,6 @@ async function loadPlaylists() {
   try {
     const r = await api("/player/playlists");
     if (!r || !r.playlists) return;
-    playlistsCache = r.playlists;
-    renderMiniPlists();
     plists.innerHTML = "";
     if (!r.playlists.length) {
       plists.innerHTML =
@@ -796,7 +778,6 @@ async function playTrack(idx) {
     meta.textContent = "playing · " + currentPlaylist.name;
     toast("playing " + tr.name);
     renderQueue();
-    [...miniPlists.children].forEach((c) => c.classList.toggle("on", c.textContent === currentPlaylist.name));
   } catch (e) {
     const msg = String((e && e.message) || e);
     setStatus(
@@ -882,48 +863,12 @@ async function playQueueItem(i) {
 // ---- focused mode (click the album art) -----------------------------------
 art.addEventListener("click", () => {
   mainEl.classList.toggle("focused");
-  if (mainEl.classList.contains("focused") && !playlistsCache.length) loadPlaylists();
 });
 
-function renderMiniPlists() {
-  miniPlists.innerHTML = "";
-  for (const p of playlistsCache) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "mini-chip";
-    chip.textContent = p.name;
-    chip.title = p.name;
-    chip.addEventListener("click", () => playPlaylistDirect(p));
-    miniPlists.appendChild(chip);
-  }
-}
-
-async function playPlaylistDirect(p) {
-  log("mini play:", p.name);
-  setStatus("starting " + p.name + "…");
-  try {
-    await ensurePlayer();
-    const r = await api("/control/play", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_id: deviceId, context_uri: "spotify:playlist:" + p.id }),
-    });
-    if (r && r.error) throw new Error(r.error);
-    await ensureSdkResumed();
-    currentPlaylistName = p.name;
-    meta.textContent = "playing · " + p.name;
-    toast("playing " + p.name);
-    [...miniPlists.children].forEach((c) => c.classList.toggle("on", c.textContent === p.name));
-  } catch (e) {
-    const msg = String((e && e.message) || e);
-    setStatus(
-      msg.includes("404") || msg.includes("active device")
-        ? "no active device — keep this tab open, then retry"
-        : "failed to play: " + msg,
-      true,
-    );
-  }
-}
+// The playlist button in focus mode re-opens the playlists on the right side.
+plistFocusBtn.addEventListener("click", () => {
+  mainEl.classList.remove("focused");
+});
 
 // ---------------------------------------------------------------------------
 // Connect flow + boot
