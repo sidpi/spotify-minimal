@@ -16,6 +16,7 @@ const TOKEN_ENDPOINT = "https://accounts.spotify.com/api/token";
 const API_BASE = "https://api.spotify.com/v1";
 
 export const SCOPES = [
+  "streaming", // required by the Web Playback SDK — without it no audio plays
   "user-read-playback-state",
   "user-modify-playback-state",
   "user-read-currently-playing",

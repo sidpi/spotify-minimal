@@ -74,6 +74,7 @@ A dead-simple website that plays your Spotify playlist and shows a minimal "now 
 
 ### 4.3 Scopes
 ```
+streaming                    → Web Playback SDK (required, else no audio!)
 user-read-playback-state     → show current track / playing state
 user-modify-playback-state   → play, pause, skip
 user-read-currently-playing  → what's on right now
