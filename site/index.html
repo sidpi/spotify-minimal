@@ -70,6 +70,16 @@
     font-size: 12px; letter-spacing: .6px; text-transform: uppercase;
   }
   #likedBtn { margin-top: 10px; }
+  .whoami {
+    display: inline-flex; align-items: center; gap: 8px;
+    color: var(--dim); font-size: 12px;
+    max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .whoami img {
+    width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+  }
+  .whoami span { overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 480px) { .whoami { max-width: 90px; } }
   @keyframes viewIn {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: none; }
@@ -369,6 +379,7 @@
 
   <div class="player-foot">
     <button class="link-btn" id="plistFocusBtn">your playlists</button>
+    <span class="whoami" id="whoami"></span>
     <button class="link-btn" id="logoutBtn" hidden>log out</button>
   </div>
 </main>
@@ -399,7 +410,8 @@ const title = $("title"), artist = $("artist"), art = $("art"),
       volume = $("volume"), volLabel = $("volLabel"),
       seek = $("seek"),
       volBtn = $("volBtn"), queue = $("queue"), qList = $("qList"),
-      plistFocusBtn = $("plistFocusBtn"), mainEl = document.querySelector("main"),
+      plistFocusBtn = $("plistFocusBtn"), whoami = $("whoami"),
+      mainEl = document.querySelector("main"),
       meta = $("meta"), statusEl = $("status"), toastEl = $("toast"),
       plistBtn = $("plistBtn"), plists = $("plists"), likedBtn = $("likedBtn"),
       logoutBtn = $("logoutBtn"),
@@ -1022,6 +1034,7 @@ function showConnect() {
   volume.disabled = true;
   seek.disabled = true;
   logoutBtn.hidden = true;
+  whoami.textContent = "";
   const a = document.createElement("a");
   a.className = "connect";
   a.href = API_BASE + "/auth/start";
@@ -1050,6 +1063,15 @@ function showConnect() {
     setStatus("Audio disabled — reconnect Spotify to grant streaming", true);
     showConnect();
     return;
+  }
+  // Show which Spotify account is connected, next to log out.
+  whoami.textContent = "";
+  if (t.display_name) {
+    whoami.innerHTML = t.image ? `<img src="${t.image}" alt="">` : "";
+    const nm = document.createElement("span");
+    nm.textContent = t.display_name;
+    whoami.appendChild(nm);
+    whoami.title = t.display_name;
   }
   // Lazy SDK init: the player is created inside the first click so the audio
   // element is autoplay-activated. Enable controls now; playback begins on tap.

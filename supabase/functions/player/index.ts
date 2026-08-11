@@ -10,6 +10,7 @@ import {
   getPlaylistTracks,
   getPlaylists,
   getValidTokens,
+  spotifyFetch,
   SpotErr,
 } from "../_shared/spotify.ts";
 
@@ -26,7 +27,21 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && action === "token") {
       const tokens = await getValidTokens();
       if (!tokens) return json({ error: "not_connected" }, 401);
-      return json({ access_token: tokens.accessToken, scopes: tokens.scope });
+      // Include the connected account's profile so the site can show who's
+      // logged in next to the log out button (best-effort, never fatal).
+      let display_name = "";
+      let image = "";
+      try {
+        const me = await spotifyFetch("/me");
+        display_name = me?.display_name ?? me?.id ?? "";
+        image = me?.images?.[0]?.url ?? "";
+      } catch (e) { /* profile is optional */ }
+      return json({
+        access_token: tokens.accessToken,
+        scopes: tokens.scope,
+        display_name,
+        image,
+      });
     }
 
     // ---- slim now-playing payload -----------------------------------------
