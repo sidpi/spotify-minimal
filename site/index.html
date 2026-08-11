@@ -111,10 +111,34 @@
   button.big:active { transform: scale(.93); }
   button.big:disabled { background: var(--border); color: var(--dim); cursor: default; }
   .volume {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; justify-content: center;
     margin-top: 30px; color: var(--dim); font-size: 14px;
   }
-  .volume input { flex: 1; accent-color: var(--accent); }
+  .vol-wrap { position: relative; display: inline-block; }
+  .vol-btn {
+    background: none; border: none; color: var(--dim);
+    font-size: 15px; cursor: pointer; line-height: 1; padding: 6px;
+    transition: color .15s, transform .1s ease;
+  }
+  .vol-btn:hover { color: var(--fg); }
+  .vol-btn:active { transform: scale(.92); }
+  .vol-pop {
+    position: absolute; bottom: calc(100% + 12px); left: 50%;
+    transform: translate(-50%, 8px);
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+    display: flex; align-items: center; gap: 10px;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease, visibility .18s;
+    box-shadow: 0 12px 32px rgba(0,0,0,.5);
+    z-index: 3;
+  }
+  .vol-pop input { width: 120px; accent-color: var(--accent); cursor: pointer; }
+  .vol-pop input:disabled { cursor: default; }
+  .vol-wrap:hover .vol-pop, .vol-wrap:focus-within .vol-pop {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transform: translate(-50%, 0);
+  }
   .link-btn {
     background: none; border: 1px solid var(--border); color: var(--dim);
     border-radius: 999px; padding: 8px 18px; font-size: 13px; cursor: pointer;
@@ -122,6 +146,56 @@
   }
   .link-btn:hover { color: var(--fg); border-color: var(--dim); }
   .link-btn:disabled { opacity: .4; cursor: default; }
+  .queue {
+    text-align: left;
+    opacity: 0; visibility: hidden; transform: translateY(6px);
+    max-height: 0; overflow: hidden; pointer-events: none;
+    transition: opacity .25s ease, transform .25s ease, visibility .25s,
+                max-height .3s ease, margin-top .3s ease;
+  }
+  .player-col:hover .queue.show {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transform: none; max-height: 230px; margin-top: 26px;
+  }
+  .q-head {
+    color: var(--dim); font-size: 12px; letter-spacing: .6px;
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+  .q-list {
+    border: 1px solid var(--border); border-radius: 12px;
+    background: rgba(24,24,27,.65); overflow: hidden;
+  }
+  .q-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background .15s;
+  }
+  .q-item:last-child { border-bottom: none; }
+  .q-item:hover { background: rgba(255,255,255,.06); }
+  .q-item img, .q-item .noimg {
+    width: 32px; height: 32px; border-radius: 5px; object-fit: cover;
+    background: var(--panel); flex-shrink: 0;
+  }
+  .q-item .noimg {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: 12px;
+  }
+  .q-main { min-width: 0; flex: 1; }
+  .q-name {
+    font-size: 13px; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .q-sub {
+    font-size: 11px; color: var(--dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  @media (hover: none) {
+    .queue.show {
+      opacity: 1; visibility: visible; pointer-events: auto;
+      transform: none; max-height: 230px; margin-top: 26px;
+    }
+  }
   .plists {
     margin-top: 14px; max-height: 62vh; overflow-y: auto;
     border: 1px solid var(--border); border-radius: 12px;
@@ -201,9 +275,18 @@
     <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
 
     <div class="volume">
-      <span>🔈</span>
-      <input type="range" id="volume" min="0" max="100" value="80" disabled>
-      <span id="volLabel">80%</span>
+      <div class="vol-wrap">
+        <button class="vol-btn" id="volBtn" type="button" title="Volume" aria-label="Volume">🔈</button>
+        <div class="vol-pop">
+          <input type="range" id="volume" min="0" max="100" value="80" disabled>
+          <span id="volLabel">80%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="queue" id="queue">
+      <div class="q-head">up next</div>
+      <div class="q-list" id="qList"></div>
     </div>
 
     <div class="meta" id="meta"></div>
@@ -249,6 +332,7 @@ const title = $("title"), artist = $("artist"), art = $("art"),
       shuffleBtn = $("shuffle"), repeatBtn = $("repeat"),
       volume = $("volume"), volLabel = $("volLabel"),
       seek = $("seek"),
+      volBtn = $("volBtn"), queue = $("queue"), qList = $("qList"),
       meta = $("meta"), statusEl = $("status"), toastEl = $("toast"),
       plistBtn = $("plistBtn"), plists = $("plists"), logoutBtn = $("logoutBtn"),
       plistView = $("plistView"), trackView = $("trackView"),
@@ -273,6 +357,9 @@ let seeking = false;
 let shuffleOn = false;
 let repeatMode = "off"; // off | context | track
 let currentPlaylist = null; // { id, name, tracks }
+let sdkNext = [];           // upcoming tracks from the SDK's track window
+let playlistOffset = -1;    // index of the last track started in currentPlaylist
+let queueItems = [];        // rendered "up next" items
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -369,6 +456,13 @@ function initPlayer() {
     shuffleOn = !!s.shuffle;
     repeatMode = s.repeat_mode || "off";
     setModeUI();
+    sdkNext = (s.track_window.next_tracks || []).map((t) => ({
+      name: t.name,
+      artists: (t.artists || []).map((a) => a.name).join(", "),
+      uri: t.uri,
+      image: t.album?.images?.[0]?.url || "",
+    }));
+    renderQueue();
     render(
       {
         name: t.name,
@@ -535,6 +629,7 @@ repeatBtn.addEventListener("click", () => {
 
 volume.addEventListener("input", () => {
   volLabel.textContent = volume.value + "%";
+  volBtn.textContent = volume.value == 0 ? "🔇" : volume.value < 50 ? "🔈" : "🔊";
   if (player) player.setVolume(volume.value / 100);
 });
 
@@ -630,6 +725,7 @@ async function playTrack(idx) {
   const tr = currentPlaylist.tracks[idx];
   if (!tr) return;
   log("play track:", tr.name, "in", currentPlaylist.name);
+  playlistOffset = idx;
   setStatus("starting " + tr.name + "…");
   try {
     await ensurePlayer();
@@ -646,6 +742,7 @@ async function playTrack(idx) {
     await ensureSdkResumed();
     meta.textContent = "playing · " + currentPlaylist.name;
     toast("playing " + tr.name);
+    renderQueue();
   } catch (e) {
     const msg = String((e && e.message) || e);
     setStatus(
@@ -670,6 +767,63 @@ backBtn.addEventListener("click", () => {
   switchView(plistView, trackView);
 });
 
+// ---- upcoming queue -------------------------------------------------------
+function renderQueue() {
+  if (!current) {
+    queue.classList.remove("show");
+    qList.innerHTML = "";
+    return;
+  }
+  let items = sdkNext.map((t) => ({ ...t, idx: null }));
+  if (!items.length && currentPlaylist && playlistOffset >= 0) {
+    // SDK window is empty (fresh load) — fall back to the playlist order.
+    items = currentPlaylist.tracks
+      .slice(playlistOffset + 1)
+      .map((tr, i) => ({
+        name: tr.name, artists: tr.artists, uri: tr.uri,
+        image: tr.image, idx: playlistOffset + 1 + i,
+      }));
+  }
+  queueItems = items.slice(0, 6);
+  if (!queueItems.length) {
+    queue.classList.remove("show");
+    qList.innerHTML = "";
+    return;
+  }
+  qList.innerHTML = queueItems
+    .map((t) => {
+      const img = t.image
+        ? `<img src="${t.image}" alt="">`
+        : '<div class="noimg">♪</div>';
+      return `<div class="q-item" role="button" tabindex="0">
+        ${img}
+        <div class="q-main"><div class="q-name"></div><div class="q-sub"></div></div>
+      </div>`;
+    })
+    .join("");
+  [...qList.querySelectorAll(".q-item")].forEach((el, i) => {
+    const t = queueItems[i];
+    el.querySelector(".q-name").textContent = t.name;
+    el.querySelector(".q-sub").textContent = t.artists;
+    const go = () => playQueueItem(i);
+    el.addEventListener("click", go);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+    });
+  });
+  queue.classList.add("show");
+}
+
+async function playQueueItem(i) {
+  const t = queueItems[i];
+  if (!t) return;
+  if (t.idx != null && currentPlaylist) { playTrack(t.idx); return; }
+  if (currentPlaylist && t.uri) {
+    const idx = currentPlaylist.tracks.findIndex((tr) => tr.uri === t.uri);
+    if (idx >= 0) { playTrack(idx); return; }
+  }
+  if (player) player.nextTrack();
+}
 
 // ---------------------------------------------------------------------------
 // Connect flow + boot
@@ -714,6 +868,7 @@ function showConnect() {
   playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
     repeatBtn.disabled = plistBtn.disabled = false;
   volume.disabled = false;
+  volBtn.textContent = volume.value == 0 ? "🔇" : volume.value < 50 ? "🔈" : "🔊";
   seek.disabled = false;
   logoutBtn.hidden = false;
   setStatus("tap play or a playlist to start");
