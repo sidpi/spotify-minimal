@@ -199,7 +199,15 @@ export async function spotifyFetch(
   if (res.status === 401) throw new SpotErr(401, "token_rejected");
   if (res.status === 204) return null;
   if (!res.ok) throw new SpotErr(res.status, `Spotify API ${res.status}`);
-  return res.json();
+  // Spotify sometimes returns 200 with a non-JSON body (e.g. a random token
+  // string from /me/player/pause) — treat unparseable bodies as null.
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 /** Slim now-playing shape the frontend polls every ~10s. */
@@ -231,6 +239,14 @@ export async function playPlaylist(
   offsetPosition?: number,
 ): Promise<void> {
   let uri = contextUri;
+  // Liked Songs is a special collection, not a playlist: resolve it to
+  // spotify:user:<id>:collection using the connected user's Spotify id.
+  if (uri === "spotify:liked" || uri === "liked") {
+    const me = await spotifyFetch("/me");
+    const userId = me?.id ?? "";
+    if (!userId) throw new SpotErr(400, "could not resolve your Spotify user");
+    uri = `spotify:user:${userId}:collection`;
+  }
   if (!uri) {
     const { data } = await db
       .from("app_state")
