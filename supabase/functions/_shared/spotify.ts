@@ -74,18 +74,21 @@ export function authorizeUrl(state: string, challenge: string): string {
 interface Tokens {
   accessToken: string;
   refreshToken: string;
+  scope: string;
 }
 
 export async function saveTokens(t: {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  scope?: string;
 }): Promise<void> {
   const { error } = await db.from("app_state").upsert({
     id: 1,
     refresh_token: t.refreshToken,
     access_token: t.accessToken,
     expires_at: t.expiresAt,
+    scope: t.scope ?? null,
     updated_at: new Date().toISOString(),
   });
   if (error) throw error;
@@ -95,16 +98,22 @@ export async function saveTokens(t: {
 export async function getValidTokens(): Promise<Tokens | null> {
   const { data, error } = await db
     .from("app_state")
-    .select("refresh_token, access_token, expires_at")
+    .select("refresh_token, access_token, expires_at, scope")
     .eq("id", 1)
     .maybeSingle();
   if (error) throw error;
   if (!data?.refresh_token) return null;
 
   const expiresAt = (data.expires_at as number | null) ?? 0;
-  if (data.access_token && Date.now() < expiresAt) {
-    return { accessToken: data.access_token, refreshToken: data.refresh_token };
+  const hasScope = !!(data.scope && data.scope.includes("streaming"));
+  if (data.access_token && Date.now() < expiresAt && hasScope) {
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      scope: data.scope,
+    };
   }
+  // Expired, or we don't know the granted scopes yet — refresh once to find out.
   return refreshTokens(data.refresh_token);
 }
 
@@ -125,6 +134,7 @@ export async function refreshTokens(refreshToken: string): Promise<Tokens> {
   const next = {
     accessToken: t.access_token,
     refreshToken: t.refresh_token ?? refreshToken,
+    scope: t.scope ?? "",
   };
   await saveTokens({
     ...next,
@@ -159,6 +169,7 @@ export async function exchangeCode(
     accessToken: t.access_token,
     refreshToken: t.refresh_token,
     expiresAt: Date.now() + (t.expires_in ?? 3600) * 1000,
+    scope: t.scope ?? "",
   });
 }
 

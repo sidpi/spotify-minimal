@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && action === "token") {
       const tokens = await getValidTokens();
       if (!tokens) return json({ error: "not_connected" }, 401);
-      return json({ access_token: tokens.accessToken });
+      return json({ access_token: tokens.accessToken, scopes: tokens.scope });
     }
 
     // ---- slim now-playing payload -----------------------------------------

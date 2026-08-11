@@ -540,9 +540,16 @@ function showConnect() {
   history.replaceState({}, "", location.pathname);
 
   const t = await api("/player/token");
-  log("boot: token", t.__unauthorized ? "UNAUTHORIZED" : "ok");
+  log("boot: token", t.__unauthorized ? "UNAUTHORIZED" : "ok", "scopes:", t.scopes);
   if (t.__unauthorized) {
     setStatus("Not connected", true);
+    showConnect();
+    return;
+  }
+  // The Web Playback SDK needs the `streaming` scope for audio. A token
+  // without it will show "Invalid token scopes" and never make a sound.
+  if (t.scopes && !String(t.scopes).split(" ").includes("streaming")) {
+    setStatus("Audio disabled — reconnect Spotify to grant streaming", true);
     showConnect();
     return;
   }
