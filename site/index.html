@@ -135,6 +135,13 @@
     pointer-events: none; white-space: nowrap;
   }
   #toast.show { opacity: 1; }
+  #debug {
+    position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 5;
+    background: rgba(0,0,0,.88); border: 1px solid var(--border);
+    color: #9f9; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 8px; max-height: 32vh; overflow-y: auto; text-align: left;
+    white-space: pre-wrap;
+  }
   a.connect {
     display: inline-block; margin-top: 18px; padding: 12px 28px;
     background: var(--accent); color: #000; border-radius: 999px;
@@ -173,6 +180,7 @@
 </main>
 
 <div id="toast"></div>
+<div id="debug" hidden></div>
 
 <script src="https://sdk.scdn.co/spotify-player.js"></script>
 <script>
@@ -195,7 +203,19 @@ const title = $("title"), artist = $("artist"), art = $("art"),
       playBtn = $("play"), prevBtn = $("prev"), nextBtn = $("next"),
       volume = $("volume"), volLabel = $("volLabel"),
       meta = $("meta"), statusEl = $("status"), toastEl = $("toast"),
-      plistBtn = $("plistBtn"), plists = $("plists");
+      plistBtn = $("plistBtn"), plists = $("plists"),
+      debugEl = $("debug");
+
+const DEBUG = new URLSearchParams(location.search).get("debug") !== null;
+if (DEBUG) debugEl.hidden = false;
+function log(...args) {
+  const line = "[" + new Date().toISOString().slice(11, 23) + "] " + args.join(" ");
+  if (DEBUG) {
+    debugEl.textContent += line + "\n";
+    debugEl.scrollTop = debugEl.scrollHeight;
+  }
+  console.log(line);
+}
 
 let player = null;
 let deviceId = null;
@@ -275,6 +295,7 @@ function initPlayer() {
 
   player.addListener("ready", async ({ device_id }) => {
     deviceId = device_id;
+    log("SDK ready, device =", device_id);
     api("/player/device", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -287,6 +308,7 @@ function initPlayer() {
   player.addListener("player_state_changed", (s) => {
     if (!s) return;
     const t = s.track_window.current_track;
+    log("state:", s.paused ? "PAUSED" : "PLAYING", "pos=" + s.position, "track=" + t.name);
     current = { paused: s.paused, position: s.position, duration: s.duration };
     render(
       {
@@ -298,13 +320,26 @@ function initPlayer() {
     );
   });
 
-  player.addListener("initialization_error", () => setStatus("SDK init error", true));
-  player.addListener("authentication_error", () =>
-    setStatus("Auth error — reconnect", true));
-  player.addListener("account_error", () => setStatus("Spotify Premium required", true));
-  player.addListener("not_ready", () => setStatus("player disconnected", true));
-  player.addListener("playback_error", (e) =>
-    setStatus("playback error: " + ((e && e.message) || "unknown"), true));
+  player.addListener("initialization_error", (e) => {
+    log("EVENT initialization_error", (e && e.message) || "");
+    setStatus("SDK init error", true);
+  });
+  player.addListener("authentication_error", (e) => {
+    log("EVENT authentication_error", (e && e.message) || "");
+    setStatus("Auth error — reconnect", true);
+  });
+  player.addListener("account_error", (e) => {
+    log("EVENT account_error", (e && e.message) || "");
+    setStatus("Spotify Premium required", true);
+  });
+  player.addListener("not_ready", ({ device_id }) => {
+    log("EVENT not_ready", device_id);
+    setStatus("player disconnected", true);
+  });
+  player.addListener("playback_error", (e) => {
+    log("EVENT playback_error", (e && e.message) || "unknown");
+    setStatus("playback error: " + ((e && e.message) || "unknown"), true);
+  });
 }
 
 // Create + connect the SDK player inside the first user gesture. Creating it
@@ -314,12 +349,15 @@ async function ensurePlayer() {
   if (player) return;
   if (!window.Spotify) throw new Error("SDK failed to load");
   setStatus("connecting player…");
+  log("ensurePlayer: creating player");
   initPlayer();
-  await player.connect().catch(() => {});
+  const ok = await player.connect().catch(() => false);
+  log("ensurePlayer: connect() ->", ok);
   const deadline = Date.now() + 8000;
   while (!deviceId && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 200));
   }
+  log("ensurePlayer: deviceId =", deviceId || "NONE");
   if (!deviceId) throw new Error("player did not become ready");
 }
 
@@ -329,6 +367,7 @@ async function ensurePlayer() {
 async function refreshNowPlaying() {
   try {
     const r = await api("/player/now-playing");
+    log("poll:", r && r.track ? (r.playing ? "playing" : "paused") + " " + r.track.name + " @" + r.progress_ms : (r && r.__unauthorized ? "unauthorized" : "nothing"));
     if (r && r.track) {
       current = { paused: !r.playing, position: r.progress_ms, duration: r.track.duration_ms };
       render(r.track, r.progress_ms, r.track.duration_ms, !r.playing);
@@ -339,7 +378,10 @@ async function refreshNowPlaying() {
     }
   } catch (e) { /* transient */ }
 }
-setInterval(refreshNowPlaying, 10000);
+// ?poll=0 disables the 10s server poll (diagnostic: does the mute correlate?)
+const POLL_MS = parseInt(new URLSearchParams(location.search).get("poll") || "10000", 10);
+if (POLL_MS > 0) setInterval(refreshNowPlaying, POLL_MS);
+log("boot: poll=" + POLL_MS + "ms debug=" + DEBUG);
 
 // ---------------------------------------------------------------------------
 // Autoplay handling
@@ -366,13 +408,16 @@ async function ensureSdkResumed() {
 // Controls
 // ---------------------------------------------------------------------------
 playBtn.addEventListener("click", async () => {
+  log("click: play button");
   try {
     await ensurePlayer();
   } catch (e) {
+    log("ensurePlayer failed:", (e && e.message) || e);
     setStatus("player failed: " + ((e && e.message) || e), true);
     return;
   }
   const s = await player.getCurrentState();
+  log("play click: current state =", s ? (s.paused ? "paused" : "playing") + " " + (s.track_window.current_track ? s.track_window.current_track.name : "?") : "none");
   if (!s) {
     // Nothing loaded yet — start the playlist server-side on this device.
     setStatus("starting playlist…");
@@ -436,6 +481,7 @@ async function loadPlaylists() {
 }
 
 async function startPlaylist(id, name) {
+  log("click: playlist", name, id);
   currentPlaylistName = name;
   setStatus("starting " + name + "…");
   try {
@@ -494,6 +540,7 @@ function showConnect() {
   history.replaceState({}, "", location.pathname);
 
   const t = await api("/player/token");
+  log("boot: token", t.__unauthorized ? "UNAUTHORIZED" : "ok");
   if (t.__unauthorized) {
     setStatus("Not connected", true);
     showConnect();
