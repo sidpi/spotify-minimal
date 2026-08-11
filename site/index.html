@@ -41,7 +41,21 @@
     padding: 32px 24px;
   }
   .player-col { width: min(92vw, 420px); text-align: center; flex-shrink: 0; }
-  .plists-col { flex: 1; min-width: 0; max-width: 520px; text-align: left; }
+  .plists-col { flex: 1; min-width: 0; max-width: 520px; min-height: 62vh; text-align: left; }
+  .col-head {
+    margin-top: 18px; color: var(--dim);
+    font-size: 12px; letter-spacing: .6px; text-transform: uppercase;
+  }
+  @keyframes viewIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  .plists-col > div { animation: viewIn .28s ease; }
+  .plists-col > div.out {
+    animation: none;
+    opacity: 0; transform: translateY(6px);
+    transition: opacity .18s ease, transform .18s ease;
+  }
   @media (max-width: 840px) {
     main { flex-direction: column; }
   }
@@ -54,7 +68,14 @@
     font-size: 64px; color: var(--dim);
     box-shadow: 0 24px 64px rgba(0,0,0,.55);
   }
-  .art img { width: 100%; height: 100%; object-fit: cover; }
+  .art img {
+    width: 100%; height: 100%; object-fit: cover;
+    animation: artIn .45s ease;
+  }
+  @keyframes artIn {
+    from { opacity: 0; transform: scale(.97); }
+    to { opacity: 1; transform: none; }
+  }
   .title {
     font-size: 22px; font-weight: 600;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -192,7 +213,7 @@
 
   <section class="plists-col">
     <div id="plistView">
-      <button class="link-btn" id="plistBtn" disabled>your playlists</button>
+      <div class="col-head" id="plistBtn">your playlists</div>
       <div class="plists" id="plists"></div>
     </div>
     <div id="trackView" hidden>
@@ -289,7 +310,8 @@ async function api(path, opts = {}) {
 function render(track, position, duration, paused) {
   title.textContent = track.name || "—";
   artist.textContent = track.artists || "—";
-  if (track.image) {
+  if (track.image && art.dataset.img !== track.image) {
+    art.dataset.img = track.image;
     art.innerHTML = `<img src="${track.image}" alt="">`;
     bgArt.style.backgroundImage = `url(${track.image})`;
   }
@@ -579,8 +601,7 @@ async function openPlaylist(p) {
     if (r && r.error) throw new Error(r.error);
     currentPlaylist = { id: p.id, name: p.name, tracks: r.tracks || [] };
     renderTracks();
-    plistView.hidden = true;
-    trackView.hidden = false;
+    await switchView(trackView, plistView);
     setStatus("ready");
   } catch (e) {
     setStatus("failed to load tracks: " + ((e && e.message) || e), true);
@@ -636,18 +657,19 @@ async function playTrack(idx) {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function switchView(show, hide) {
+  hide.classList.add("out");
+  await sleep(180);
+  hide.hidden = true;
+  hide.classList.remove("out");
+  show.hidden = false;
+}
+
 backBtn.addEventListener("click", () => {
-  trackView.hidden = true;
-  plistView.hidden = false;
+  switchView(plistView, trackView);
 });
 
-plistBtn.addEventListener("click", () => {
-  plists.hidden = !plists.hidden;
-  if (!plists.hidden && !plists.dataset.loaded) {
-    plists.dataset.loaded = "1";
-    loadPlaylists();
-  }
-});
 
 // ---------------------------------------------------------------------------
 // Connect flow + boot
