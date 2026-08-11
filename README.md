@@ -1,119 +1,188 @@
-# spotify-minimal
+# 🎧 spotify-minimal
 
-Minimalist Spotify playlist player — one dark screen, Web Playback SDK in the browser, Supabase Edge Functions backend. 100% free tier. Plan A structure (see `PLAN.md` / `STRUCTURE.md`).
+A minimalist, single-page Spotify player. One dark screen, the **Web Playback SDK**
+in the browser, and a **Supabase Edge Functions** backend. No build step, no
+framework, no cost — everything runs on free tiers.
+
+![Spotify](https://img.shields.io/badge/Spotify-1DB954?style=flat-square&logo=spotify&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=white)
+![Cloudflare Pages](https://img.shields.io/badge/Cloudflare%20Pages-F38020?style=flat-square&logo=cloudflare&logoColor=white)
+
+## Features
+
+- **Minimalist player** — Spotify-black UI with green accents, album art, and
+  live background blur
+- **Web Playback SDK** — the browser tab *is* the player
+- **Playlist browser** — your playlists with covers, plus a per-playlist track
+  list that plays from any position
+- **Full transport controls** — play/pause, previous/next, seek bar,
+  shuffle, and repeat (off · all · one)
+- **Upcoming queue** — the next tracks peek out when you hover the player;
+  click one to jump to it
+- **Focus mode** — click the album art to center the player; a button restores
+  the two-column layout
+- **Volume popover** — hover the speaker icon next to the seek bar
+- **Secure by default** — PKCE OAuth, JWT-verified functions, and the Spotify
+  refresh token never leaves the server
+
+## How it works
 
 ```
-site/index.html        → Cloudflare Pages (music.sidcandev.online)
-supabase/functions/
-  auth/                → /auth/start, /auth/callback  (Spotify OAuth, PKCE)
-  player/              → /player/token, /player/now-playing, /player/device
-  control/             → /control/play, /control/pause, /control/next, /control/previous
-  _shared/             → cors.ts, spotify.ts (tokens, PKCE, Spotify API)
-supabase/migrations/   → app_state + pkce_store tables
+┌─────────────┐  fetch (Bearer anon key)   ┌──────────────────────┐
+│  site/      │ ──────────────────────────▶│  Supabase Edge       │
+│  index.html │ ◀──────────────────────────│  Functions (auth,    │
+│  (static)   │      JSON                  │  player, control)    │
+└─────────────┘                            └──────────┬───────────┘
+        │                                             │ Spotify Web API
+        │ Web Playback SDK (audio)                    ▼
+        └────────────────────────────────▶ Spotify (Premium account)
 ```
 
-## API keys — where they fit (and don't)
+1. **Connect** — `/auth/start` redirects to Spotify with PKCE; `/auth/callback`
+   exchanges the code and stores the refresh token in the database.
+2. **Listen** — the browser SDK asks `/player/token` for short-lived access
+   tokens (minted server-side from the stored refresh token).
+3. **Control** — play/pause/seek/volume hit `/control/*`, which drive the same
+   active SDK device via Spotify's API.
 
-Supabase projects expose two keys (Settings → API → Project API keys):
+## Repository layout
 
-| Key | Used here? | Where it goes |
-|---|---|---|
-| **Publishable (anon)** | ✅ Used, safe to embed | The site sends it as `Authorization: Bearer <anon key>` on every API call. It's public by design — Supabase's gateway uses it to JWT-verify `player`/`control` requests. |
-| **Secret (service_role)** | ✅ Auto-injected | Edge Functions automatically receive `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from the runtime (deployed *and* local `supabase functions serve`). The functions use it to store the refresh token. You don't paste it anywhere; it never reaches the browser. |
+```
+site/
+  index.html            Static frontend — no build step. Deploy as-is.
+supabase/
+  functions/
+    auth/               OAuth start / callback / logout (PKCE)
+    player/             token, now-playing, device, playlists, playlist tracks
+    control/            play, pause, next, previous
+    _shared/            CORS helpers + Spotify API client
+  migrations/           app_state + pkce_store tables
+```
 
-> Why is `auth` deployed with `--no-verify-jwt`? The OAuth flow is a plain
-> browser redirect to `/auth/start` — a navigation can't attach an Authorization
-> header, so JWT verification would 401 it before the function runs. `player`
-> and `control` keep default JWT verification: the gateway rejects any request
-> without the anon key, so no secret key lives in the frontend.
+## Getting started
 
-## Prerequisites
+### Prerequisites
 
-- Spotify account with **Premium** (required by the Web Playback SDK)
-- [Supabase CLI](https://supabase.com/docs/guides/cli) installed and logged in
-- A Supabase project (free) — note its **project ref** (the `abcdefgh` part of `wrnidxaoijyopcfnenlw.supabase.co`)
+- A **Spotify Premium** account (the Web Playback SDK refuses free accounts)
+- A Spotify app in the [Developer Dashboard](https://developer.spotify.com/dashboard)
+- [Supabase CLI](https://supabase.com/docs/guides/cli) and a free Supabase project
+- Any static host for the frontend (Cloudflare Pages, Netlify, GitHub Pages…)
 
-## 1. Spotify app
+### 1. Create the Spotify app
 
-1. Go to <https://developer.spotify.com/dashboard> → Create app.
-2. Copy **Client ID** and **Client Secret**.
-3. Add a **Redirect URI** — exactly:
-   `https://wrnidxaoijyopcfnenlw.supabase.co/functions/v1/auth/callback`
+1. Go to the Developer Dashboard → **Create app**.
+2. Copy the **Client ID** and **Client Secret**.
+3. Add a **Redirect URI** — exactly this (fill in your project ref):
 
-## 2. Supabase: link, migrate, secrets
+   ```
+   https://<project-ref>.supabase.co/functions/v1/auth/callback
+   ```
+
+### 2. Link and migrate the Supabase project
 
 ```bash
 supabase login
-supabase init                     # keep the existing supabase/config.toml
-supabase link --project-ref wrnidxaoijyopcfnenlw
-supabase db push                  # runs supabase/migrations/*.sql
-
-supabase secrets set \
-  SPOTIFY_CLIENT_ID=... \
-  SPOTIFY_CLIENT_SECRET=... \
-  SPOTIFY_REDIRECT_URI=https://wrnidxaoijyopcfnenlw.supabase.co/functions/v1/auth/callback \
-  SITE_URL=https://music.sidcandev.online \
-  ALLOWED_ORIGIN=https://music.sidcandev.online \
-  PLAYLIST_ID=spotify:playlist:xxx
+supabase init
+supabase link --project-ref <project-ref>
+supabase db push          # applies supabase/migrations/*.sql
 ```
 
-> `auth` is deployed with `--no-verify-jwt` (browser redirect can't send
-> headers); `player`/`control` deploy with default JWT verification, so the
-> gateway rejects calls without the anon key. (The old `verify_jwt` config key
-> is gone in CLI 2.113+ — don't add a `[functions]` section to `config.toml`,
-> it fails to parse.)
+### 3. Set the secrets
 
-## 3. Deploy the backend
+```bash
+supabase secrets set \
+  SPOTIFY_CLIENT_ID=<client-id> \
+  SPOTIFY_CLIENT_SECRET=<client-secret> \
+  SPOTIFY_REDIRECT_URI=https://<project-ref>.supabase.co/functions/v1/auth/callback \
+  SITE_URL=https://<your-domain> \
+  ALLOWED_ORIGIN=https://<your-domain> \
+  PLAYLIST_ID=spotify:playlist:<playlist-id>
+```
+
+> **CLI 2.113+ note:** the old `[functions]` section in `config.toml` was
+> removed — do **not** add one, the parser rejects it. JWT settings are now a
+> deploy flag (below), not config.
+
+### 4. Deploy the functions
 
 ```bash
 supabase functions deploy auth --no-verify-jwt
 supabase functions deploy player control
 ```
 
-Test: open `https://wrnidxaoijyopcfnenlw.supabase.co/functions/v1/auth/start` → you should be
-redirected to Spotify's login.
+`auth` runs without JWT verification because a browser redirect can't attach
+an `Authorization` header; `player` and `control` keep the default
+verification, so Supabase's gateway rejects any call without the anon key.
 
-## 4. Frontend + your domain
+Verify the backend with:
 
-1. Edit `site/index.html`:
-   - `API_BASE` → `https://wrnidxaoijyopcfnenlw.supabase.co/functions/v1`
-   - `ANON_KEY` → your Supabase publishable (anon) key — public by design,
-     safe to embed
-2. Push the repo to GitHub/GitLab, then in **Cloudflare Pages** → Create project →
-   connect the repo, build command **none**, output directory `site`.
-3. Cloudflare Pages → Custom domains → add `music.sidcandev.online`.
-   DNS is at Spaceship (nameservers `launch1/launch2.spaceship.net`), so add the
-   record in the **Spaceship dashboard**: `CNAME  music  → <your-project>.pages.dev`
-   Cloudflare verifies and issues HTTPS automatically.
-
-> `?api=<url>` query param overrides `API_BASE` — handy for testing a function
-> URL before you push the real site.
-
-## 5. Connect once
-
-Visit `https://music.sidcandev.online` → **Connect Spotify** → allow → you land back
-on the site with playback ready. Press **▶** to start the playlist.
-
-- To change the playlist: set the `PLAYLIST_ID` secret
-  (`supabase secrets set PLAYLIST_ID=spotify:playlist:xxx`) or update the
-  `playlist_id` column in the `app_state` table.
-
-## Local dev
-
-```bash
-supabase start                    # local Postgres + functions runtime
-supabase functions serve          # serves on http://127.0.0.1:54321/functions/v1
+```
+https://<project-ref>.supabase.co/functions/v1/auth/start
 ```
 
-Point your browser at `http://127.0.0.1:54321/functions/v1/auth/start` with
-`SPOTIFY_REDIRECT_URI` set to the local callback and `SITE_URL`/`ALLOWED_ORIGIN`
-to your local frontend origin. If you don't run the local frontend, you can test
-with `site/index.html?api=http://127.0.0.1:54321/functions/v1`.
+It should redirect you to Spotify's login page.
 
-## Gotchas
+### 5. Point the frontend at your project
 
-- **Premium required** — the SDK refuses free accounts.
-- Music stops when the tab closes (by design — no 24/7).
-- One active device per account — playing in the Spotify app elsewhere steals playback.
-- Supabase free projects auto-pause after 7 days idle; the first request after a
-  pause is slow while it wakes.
+In `site/index.html`, set two values:
+
+| Constant | Value |
+|---|---|
+| `API_BASE` | `https://<project-ref>.supabase.co/functions/v1` |
+| `ANON_KEY` | your project's publishable (anon) key — public by design |
+
+Then deploy `site/` as a static site: **build command** none, **output
+directory** `site`. On Cloudflare Pages: connect the repo → add your custom
+domain → add the `CNAME` at your DNS provider pointing at the Pages project.
+
+> `?api=<url>` overrides `API_BASE` in the browser — handy for testing against
+> a local functions server before you deploy.
+
+### 6. Connect and play
+
+Open your site → **Connect Spotify** → approve the permission screen → you land
+back on the player. Press **▶** or open a playlist.
+
+To change the default playlist, update the `PLAYLIST_ID` secret or the
+`playlist_id` row in the `app_state` table.
+
+## Keys: what goes where
+
+| Key | Where it lives | Why it's safe |
+|---|---|---|
+| Publishable (anon) | Embedded in `site/index.html`, sent as `Authorization: Bearer` | Public by design; the gateway JWT-verifies `player`/`control` calls with it |
+| Service role (secret) | Auto-injected into Edge Functions only | Used to store the refresh token; never reaches the browser or the repo |
+| Spotify client secret | Supabase secrets | Never in the repo or frontend |
+
+## Security notes
+
+- The Spotify **refresh token is stored in the database**; the browser only ever
+  sees short-lived access tokens minted server-side.
+- `player`/`control` are **JWT-verified** at the gateway, so unauthenticated
+  calls are rejected before any code runs.
+- **CORS is locked down** via the `ALLOWED_ORIGIN` secret — browsers on other
+  origins can't call your functions.
+- **No secrets in the repo** — everything sensitive lives in Supabase secrets
+  and `.env` (gitignored).
+
+## Limitations
+
+- **Premium required** — the Web Playback SDK refuses free accounts.
+- **The tab is the player** — music stops when the tab closes (no 24/7 playback; by design).
+- **One active device per account** — playing in the Spotify app elsewhere steals playback.
+- Free Supabase projects **auto-pause after 7 days idle**; the first request after a pause is slow while it wakes.
+
+## Local development
+
+```bash
+supabase start          # local Postgres + functions runtime
+supabase functions serve
+```
+
+Set `SPOTIFY_REDIRECT_URI` to the local callback and
+`SITE_URL`/`ALLOWED_ORIGIN` to your local frontend origin, then open
+`site/index.html?api=http://127.0.0.1:54321/functions/v1`.
+
+## License
+
+[MIT](LICENSE)
