@@ -209,26 +209,53 @@ export async function getNowPlaying(): Promise<object> {
   };
 }
 
-/** Start the configured playlist on Spotify (optionally targeting a device). */
-export async function playPlaylist(deviceId?: string): Promise<void> {
-  const { data } = await db
-    .from("app_state")
-    .select("playlist_id")
-    .eq("id", 1)
-    .maybeSingle();
-  const playlistId = data?.playlist_id ?? env("PLAYLIST_ID");
-  if (!playlistId) throw new SpotErr(400, "no playlist configured");
-  const contextUri = playlistId.startsWith("spotify:")
-    ? playlistId
-    : `spotify:playlist:${playlistId}`;
+/**
+ * Start a playlist on Spotify. Pass an explicit playlist id/context_uri (e.g.
+ * from the playlists browser), otherwise fall back to the configured default.
+ */
+export async function playPlaylist(
+  deviceId?: string,
+  contextUri?: string,
+): Promise<void> {
+  let uri = contextUri;
+  if (!uri) {
+    const { data } = await db
+      .from("app_state")
+      .select("playlist_id")
+      .eq("id", 1)
+      .maybeSingle();
+    uri = data?.playlist_id ?? env("PLAYLIST_ID");
+  }
+  if (!uri) throw new SpotErr(400, "no playlist configured");
+  const finalUri = uri.startsWith("spotify:") ? uri : `spotify:playlist:${uri}`;
   const qs = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
   await spotifyFetch(`/me/player/play${qs}`, {
     method: "PUT",
-    body: JSON.stringify({ context_uri: contextUri, offset: { position: 0 } }),
+    body: JSON.stringify({ context_uri: finalUri, offset: { position: 0 } }),
   });
   if (deviceId) {
     await db
       .from("app_state")
       .upsert({ id: 1, device_id: deviceId, updated_at: new Date().toISOString() });
   }
+}
+
+/** Slim shape of the user's playlists (GET /v1/me/playlists). */
+export async function getPlaylists(): Promise<object[]> {
+  const data = await spotifyFetch("/me/playlists?limit=50");
+  return (data?.items ?? []).map((p: {
+    id: string;
+    name: string;
+    images: { url: string }[];
+    tracks: { total: number };
+    owner: { display_name: string };
+    public: boolean | null;
+  }) => ({
+    id: p.id,
+    name: p.name,
+    image: p.images?.[0]?.url ?? "",
+    tracks: p.tracks?.total ?? 0,
+    owner: p.owner?.display_name ?? "",
+    public: p.public,
+  }));
 }

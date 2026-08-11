@@ -7,6 +7,7 @@ import { handlePreflight, json } from "../_shared/cors.ts";
 import {
   db,
   getNowPlaying,
+  getPlaylists,
   getValidTokens,
   SpotErr,
 } from "../_shared/spotify.ts";
@@ -30,6 +31,11 @@ Deno.serve(async (req) => {
     // ---- slim now-playing payload -----------------------------------------
     if (req.method === "GET" && action === "now-playing") {
       return json(await getNowPlaying());
+    }
+
+    // ---- the user's playlists (for the site's playlist browser) ------------
+    if (req.method === "GET" && action === "playlists") {
+      return json({ playlists: await getPlaylists() });
     }
 
     // ---- register the browser's Web Playback SDK device -------------------

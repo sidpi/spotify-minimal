@@ -90,6 +90,40 @@
     margin-top: 30px; color: var(--dim); font-size: 14px;
   }
   .volume input { flex: 1; accent-color: var(--accent); }
+  .link-btn {
+    background: none; border: 1px solid var(--border); color: var(--dim);
+    border-radius: 999px; padding: 8px 18px; font-size: 13px; cursor: pointer;
+    margin-top: 18px;
+  }
+  .link-btn:hover { color: var(--fg); border-color: var(--dim); }
+  .link-btn:disabled { opacity: .4; cursor: default; }
+  .plists {
+    margin-top: 14px; max-height: 40vh; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: rgba(24,24,27,.65); text-align: left;
+  }
+  .plists[hidden] { display: none; }
+  .pl-item {
+    display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+    cursor: pointer; border-bottom: 1px solid var(--border);
+  }
+  .pl-item:last-child { border-bottom: none; }
+  .pl-item:hover { background: rgba(255,255,255,.05); }
+  .pl-item img {
+    width: 40px; height: 40px; border-radius: 6px; object-fit: cover;
+    background: var(--panel); flex-shrink: 0;
+  }
+  .pl-item .noimg {
+    width: 40px; height: 40px; border-radius: 6px; background: var(--panel);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--dim); flex-shrink: 0;
+  }
+  .pl-item .pl-main { min-width: 0; flex: 1; }
+  .pl-item .pl-name {
+    font-size: 14px; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pl-item .pl-sub { font-size: 12px; color: var(--dim); }
   .meta { margin-top: 20px; color: var(--dim); font-size: 13px; min-height: 18px; }
   #status { margin-top: 12px; color: var(--accent); font-size: 13px; min-height: 18px; }
   #status.err { color: #ff5f56; }
@@ -131,6 +165,9 @@
     <span id="volLabel">80%</span>
   </div>
 
+  <button class="link-btn" id="plistBtn" disabled>your playlists</button>
+  <div class="plists" id="plists" hidden></div>
+
   <div class="meta" id="meta"></div>
   <div id="status"></div>
 </main>
@@ -157,7 +194,8 @@ const title = $("title"), artist = $("artist"), art = $("art"),
       bgArt = $("bg-art"), fill = $("fill"), pos = $("pos"), dur = $("dur"),
       playBtn = $("play"), prevBtn = $("prev"), nextBtn = $("next"),
       volume = $("volume"), volLabel = $("volLabel"),
-      meta = $("meta"), statusEl = $("status"), toastEl = $("toast");
+      meta = $("meta"), statusEl = $("status"), toastEl = $("toast"),
+      plistBtn = $("plistBtn"), plists = $("plists");
 
 let player = null;
 let deviceId = null;
@@ -207,7 +245,7 @@ function render(track, position, duration, paused) {
   updatePos(position, duration);
   playBtn.textContent = paused ? "▶" : "⏸";
   document.body.classList.toggle("playing", !paused);
-  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = false;
+  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = plistBtn.disabled = false;
 }
 
 function updatePos(position, duration) {
@@ -278,7 +316,7 @@ async function refreshNowPlaying() {
     if (r && r.track) {
       current = { paused: !r.playing, position: r.progress_ms, duration: r.track.duration_ms };
       render(r.track, r.progress_ms, r.track.duration_ms, !r.playing);
-      meta.textContent = "spotify · playing your playlist";
+      meta.textContent = "playing · " + (currentPlaylistName || "your playlist");
     } else if (r && r.__unauthorized) {
       setStatus("Not connected — press Connect Spotify", true);
       showConnect();
@@ -317,10 +355,67 @@ volume.addEventListener("input", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Playlist browser
+// ---------------------------------------------------------------------------
+let currentPlaylistName = "";
+
+async function loadPlaylists() {
+  try {
+    const r = await api("/player/playlists");
+    if (!r || !r.playlists) return;
+    plists.innerHTML = "";
+    if (!r.playlists.length) {
+      plists.innerHTML =
+        '<div class="pl-item" style="cursor:default"><span class="pl-sub">no playlists found</span></div>';
+      return;
+    }
+    for (const p of r.playlists) {
+      const el = document.createElement("div");
+      el.className = "pl-item";
+      el.innerHTML =
+        (p.image ? `<img src="${p.image}" alt="">` : '<div class="noimg">♪</div>') +
+        '<div class="pl-main"><div class="pl-name"></div><div class="pl-sub"></div></div>';
+      el.querySelector(".pl-name").textContent = p.name;
+      el.querySelector(".pl-sub").textContent = `${p.tracks} tracks · ${p.owner}`;
+      el.addEventListener("click", () => startPlaylist(p.id, p.name));
+      plists.appendChild(el);
+    }
+  } catch (e) { /* transient */ }
+}
+
+async function startPlaylist(id, name) {
+  currentPlaylistName = name;
+  setStatus("starting " + name + "…");
+  try {
+    await api("/control/play", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        device_id: deviceId,
+        context_uri: "spotify:playlist:" + id,
+      }),
+    });
+    meta.textContent = "playing · " + name;
+    toast("playing " + name);
+    plists.hidden = true;
+  } catch (e) {
+    setStatus("failed to start playlist", true);
+  }
+}
+
+plistBtn.addEventListener("click", () => {
+  plists.hidden = !plists.hidden;
+  if (!plists.hidden && !plists.dataset.loaded) {
+    plists.dataset.loaded = "1";
+    loadPlaylists();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Connect flow + boot
 // ---------------------------------------------------------------------------
 function showConnect() {
-  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = true;
+  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = plistBtn.disabled = true;
   volume.disabled = true;
   const a = document.createElement("a");
   a.className = "connect";

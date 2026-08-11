@@ -1,5 +1,6 @@
 // Playback control — Plan A, function 3 of 3.
-//   POST /control/play      body: { "device_id"?: "..." } → start the configured playlist
+//   POST /control/play      body: { "device_id"?: "...", "context_uri"?: "spotify:playlist:..." }
+//                            → start the playlist (explicit one or the configured default)
 //   POST /control/pause
 //   POST /control/next
 //   POST /control/previous
@@ -27,8 +28,8 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "play": {
-        const { device_id } = await req.json().catch(() => ({}));
-        await playPlaylist(device_id);
+        const { device_id, context_uri } = await req.json().catch(() => ({}));
+        await playPlaylist(device_id, context_uri);
         return json({ ok: true });
       }
       case "pause":
