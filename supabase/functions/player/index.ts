@@ -3,7 +3,7 @@
 //   GET  /player/now-playing → slim current-track payload (polled by the site)
 //   POST /player/device      → register the SDK's device_id (body: { "device_id": "..." })
 
-import { handlePreflight, json, requireAppKey } from "../_shared/cors.ts";
+import { handlePreflight, json } from "../_shared/cors.ts";
 import {
   db,
   getNowPlaying,
@@ -14,7 +14,7 @@ import {
 Deno.serve(async (req) => {
   const preflight = handlePreflight(req);
   if (preflight) return preflight;
-  if (!requireAppKey(req)) return json({ error: "forbidden" }, 403);
+  // JWT verification is handled by Supabase's gateway (default for deploy).
 
   try {
     const url = new URL(req.url);

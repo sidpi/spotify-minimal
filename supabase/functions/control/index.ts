@@ -8,7 +8,7 @@
 // browser tab that owns the SDK). The UI uses the SDK for instant local
 // control; these are the server-side truth.
 
-import { handlePreflight, json, requireAppKey } from "../_shared/cors.ts";
+import { handlePreflight, json } from "../_shared/cors.ts";
 import {
   playPlaylist,
   spotifyFetch,
@@ -18,7 +18,7 @@ import {
 Deno.serve(async (req) => {
   const preflight = handlePreflight(req);
   if (preflight) return preflight;
-  if (!requireAppKey(req)) return json({ error: "forbidden" }, 403);
+  // JWT verification is handled by Supabase's gateway (default for deploy).
 
   try {
     const url = new URL(req.url);

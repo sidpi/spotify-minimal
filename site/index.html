@@ -143,13 +143,14 @@
 
 // ---------------------------------------------------------------------------
 // Config — API_BASE is filled in for your project (wrnidxaoijyopcfnenlw).
-// APP_KEY:  the shared secret you set with `supabase secrets set APP_KEY=...`
-//   (leave "" if you never set one)
+// ANON_KEY: your Supabase publishable (anon) key — public by design, safe to
+//   embed. Sent as `Authorization: Bearer` on every API call; the player and
+//   control functions are JWT-verified by Supabase's gateway.
 // ---------------------------------------------------------------------------
 const API_BASE =
   new URLSearchParams(location.search).get("api") ||
   "https://wrnidxaoijyopcfnenlw.supabase.co/functions/v1";
-const APP_KEY = "670b6d9d1c0d7020d336c474decec66767551d4ec25a015f1a3296417da400a4";
+const ANON_KEY = "sb_publishable_Dp0eF_zbNO15piMwROe1aA_f5JKEp7Z";
 
 const $ = (id) => document.getElementById(id);
 const title = $("title"), artist = $("artist"), art = $("art"),
@@ -186,7 +187,7 @@ const toast = (msg) => {
 
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
-  if (APP_KEY) headers["x-app-key"] = APP_KEY;
+  headers["Authorization"] = "Bearer " + ANON_KEY;
   const res = await fetch(API_BASE + path, { ...opts, headers });
   if (res.status === 401) return { __unauthorized: true };
   return res.json();

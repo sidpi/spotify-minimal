@@ -18,14 +18,14 @@ Supabase projects expose two keys (Settings → API → Project API keys):
 
 | Key | Used here? | Where it goes |
 |---|---|---|
-| **Publishable (anon)** | ❌ Not used | The site never talks to Supabase directly — it only calls our Edge Functions (deployed with `--no-verify-jwt`), so no key is needed in the frontend. Never put the **service role** key in the frontend. |
+| **Publishable (anon)** | ✅ Used, safe to embed | The site sends it as `Authorization: Bearer <anon key>` on every API call. It's public by design — Supabase's gateway uses it to JWT-verify `player`/`control` requests. |
 | **Secret (service_role)** | ✅ Auto-injected | Edge Functions automatically receive `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from the runtime (deployed *and* local `supabase functions serve`). The functions use it to store the refresh token. You don't paste it anywhere; it never reaches the browser. |
 
-> Why `verify_jwt = false`? The OAuth flow is a plain browser redirect to
-> `/auth/start` — a navigation can't attach an Authorization header, so JWT
-> verification would 401 it before the function runs. Instead the JSON
-> endpoints (`player`, `control`) are gated by the `APP_KEY` shared secret
-> (sent as `x-app-key`), and `auth` only redirects and stores tokens.
+> Why is `auth` deployed with `--no-verify-jwt`? The OAuth flow is a plain
+> browser redirect to `/auth/start` — a navigation can't attach an Authorization
+> header, so JWT verification would 401 it before the function runs. `player`
+> and `control` keep default JWT verification: the gateway rejects any request
+> without the anon key, so no secret key lives in the frontend.
 
 ## Prerequisites
 
@@ -54,19 +54,20 @@ supabase secrets set \
   SPOTIFY_REDIRECT_URI=https://wrnidxaoijyopcfnenlw.supabase.co/functions/v1/auth/callback \
   SITE_URL=https://music.sidcandev.online \
   ALLOWED_ORIGIN=https://music.sidcandev.online \
-  APP_KEY=<your-app-key>   # keep in sync with site/index.html
+  PLAYLIST_ID=spotify:playlist:xxx
 ```
 
-> JWT verification is off for all three functions via the `--no-verify-jwt` deploy
-> flag (the old `verify_jwt` config key is gone in CLI 2.113+ — don't add a
-> `[functions]` section to `config.toml`, it fails to parse). The `APP_KEY`
-> (sent as `x-app-key`) protects `player`/`control`; `auth` stays open — it only
-> redirects and stores tokens.
+> `auth` is deployed with `--no-verify-jwt` (browser redirect can't send
+> headers); `player`/`control` deploy with default JWT verification, so the
+> gateway rejects calls without the anon key. (The old `verify_jwt` config key
+> is gone in CLI 2.113+ — don't add a `[functions]` section to `config.toml`,
+> it fails to parse.)
 
 ## 3. Deploy the backend
 
 ```bash
-supabase functions deploy auth player control --no-verify-jwt
+supabase functions deploy auth --no-verify-jwt
+supabase functions deploy player control
 ```
 
 Test: open `https://wrnidxaoijyopcfnenlw.supabase.co/functions/v1/auth/start` → you should be
@@ -76,7 +77,8 @@ redirected to Spotify's login.
 
 1. Edit `site/index.html`:
    - `API_BASE` → `https://wrnidxaoijyopcfnenlw.supabase.co/functions/v1`
-   - `APP_KEY` → the same value you set above
+   - `ANON_KEY` → your Supabase publishable (anon) key — public by design,
+     safe to embed
 2. Push the repo to GitHub/GitLab, then in **Cloudflare Pages** → Create project →
    connect the repo, build command **none**, output directory `site`.
 3. Cloudflare Pages → Custom domains → add `music.sidcandev.online`.
