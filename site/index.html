@@ -338,14 +338,18 @@ playBtn.addEventListener("click", async () => {
   const s = await player.getCurrentState();
   if (!s) {
     // Nothing loaded yet — start the playlist server-side on this device.
+    // connect() inside the click gesture is the documented fix for Chrome's
+    // autoplay policy, which otherwise silences the SDK audio after ~10s.
     setStatus("starting playlist…");
     try {
+      await player.connect().catch(() => {});
       const r = await api("/control/play", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ device_id: deviceId }),
       });
       if (r && r.error) throw new Error(r.error);
+      player.resume().catch(() => {});
     } catch (e) {
       const msg = String((e && e.message) || e);
       setStatus(
@@ -390,7 +394,7 @@ async function loadPlaylists() {
         (p.image ? `<img src="${p.image}" alt="">` : '<div class="noimg">♪</div>') +
         '<div class="pl-main"><div class="pl-name"></div><div class="pl-sub"></div></div>';
       el.querySelector(".pl-name").textContent = p.name;
-      el.querySelector(".pl-sub").textContent = `${p.tracks} tracks · ${p.owner}`;
+      el.querySelector(".pl-sub").textContent = p.owner;
       el.addEventListener("click", () => startPlaylist(p.id, p.name));
       plists.appendChild(el);
     }
@@ -401,6 +405,8 @@ async function startPlaylist(id, name) {
   currentPlaylistName = name;
   setStatus("starting " + name + "…");
   try {
+    // Same gesture-activation fix as the play button (see above).
+    await player.connect().catch(() => {});
     const r = await api("/control/play", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -410,6 +416,7 @@ async function startPlaylist(id, name) {
       }),
     });
     if (r && r.error) throw new Error(r.error);
+    player.resume().catch(() => {});
     meta.textContent = "playing · " + name;
     toast("playing " + name);
     plists.hidden = true;

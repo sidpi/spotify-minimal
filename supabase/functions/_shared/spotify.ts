@@ -243,18 +243,18 @@ export async function playPlaylist(
 /** Slim shape of the user's playlists (GET /v1/me/playlists). */
 export async function getPlaylists(): Promise<object[]> {
   const data = await spotifyFetch("/me/playlists?limit=50");
+  // Note: Spotify removed `tracks.total` from playlist items in the API, so
+  // we no longer try to show a track count.
   return (data?.items ?? []).map((p: {
     id: string;
     name: string;
     images: { url: string }[];
-    tracks: { total: number };
     owner: { display_name: string };
     public: boolean | null;
   }) => ({
     id: p.id,
     name: p.name,
     image: p.images?.[0]?.url ?? "",
-    tracks: p.tracks?.total ?? 0,
     owner: p.owner?.display_name ?? "",
     public: p.public,
   }));
