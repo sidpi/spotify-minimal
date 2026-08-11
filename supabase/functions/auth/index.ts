@@ -78,6 +78,24 @@ Deno.serve(async (req) => {
       return Response.redirect(`${siteUrl()}/?connected=1`, 302);
     }
 
+    // ---- /auth/logout -----------------------------------------------------
+    // Clears the stored Spotify tokens so the site drops back to the connect
+    // screen — a fresh authorize (with current scopes) fixes stale sessions.
+    if (req.method === "POST" && action === "logout") {
+      const { error } = await db
+        .from("app_state")
+        .update({
+          refresh_token: null,
+          access_token: null,
+          expires_at: null,
+          scope: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", 1);
+      if (error) throw error;
+      return json({ ok: true });
+    }
+
     return json({ error: "not found" }, 404);
   } catch (e) {
     return json({ error: (e as Error).message }, 500);
