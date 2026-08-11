@@ -7,12 +7,12 @@
 <title>now playing</title>
 <style>
   :root {
-    --bg: #0d0d0f;
-    --fg: #e8e8ea;
-    --dim: #8a8a93;
+    --bg: #000;
+    --fg: #ffffff;
+    --dim: #b3b3b3;
     --accent: #1ed760;
-    --panel: #18181b;
-    --border: #26262b;
+    --panel: #121212;
+    --border: #1f1f1f;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -71,17 +71,19 @@
   }
   .controls {
     display: flex; align-items: center; justify-content: center;
-    gap: 40px; margin-top: 26px;
+    gap: 30px; margin: 6px 0 26px;
   }
   button.icon {
     background: none; border: none; color: var(--fg);
-    font-size: 26px; cursor: pointer; line-height: 1;
+    font-size: 20px; cursor: pointer; line-height: 1; transition: color .15s;
   }
   button.icon:active { opacity: .6; }
+  button.icon:disabled { opacity: .35; cursor: default; }
+  button.icon.on { color: var(--accent); }
   button.big {
-    width: 74px; height: 74px; border-radius: 50%;
+    width: 64px; height: 64px; border-radius: 50%;
     background: var(--accent); color: #000; border: none;
-    font-size: 30px; cursor: pointer;
+    font-size: 26px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     transition: transform .1s ease;
   }
@@ -126,6 +128,12 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .pl-item .pl-sub { font-size: 12px; color: var(--dim); }
+  .track-head {
+    margin: 16px 0 8px; font-size: 15px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .trk-idx { width: 22px; color: var(--dim); font-size: 12px; flex-shrink: 0; text-align: right; }
+  .trk-dur { color: var(--dim); font-size: 12px; flex-shrink: 0; }
   .meta { margin-top: 20px; color: var(--dim); font-size: 13px; min-height: 18px; }
   #status { margin-top: 12px; color: var(--accent); font-size: 13px; min-height: 18px; }
   #status.err { color: #ff5f56; }
@@ -156,18 +164,20 @@
 
 <main>
   <section class="player-col">
+    <div class="controls">
+      <button class="icon" id="shuffle" title="Shuffle" disabled>⤨</button>
+      <button class="icon" id="prev" title="Previous" disabled>⏮</button>
+      <button class="big" id="play" title="Play / pause" disabled>▶</button>
+      <button class="icon" id="next" title="Next" disabled>⏭</button>
+      <button class="icon" id="repeat" title="Repeat off" disabled>🔁</button>
+    </div>
+
     <div class="art" id="art">♫</div>
     <div class="title" id="title">—</div>
     <div class="artist" id="artist">not connected</div>
 
     <input type="range" class="seek" id="seek" min="0" max="1000" value="0" step="1" disabled aria-label="Seek">
     <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
-
-    <div class="controls">
-      <button class="icon" id="prev" title="Previous" disabled>⏮</button>
-      <button class="big" id="play" title="Play / pause" disabled>▶</button>
-      <button class="icon" id="next" title="Next" disabled>⏭</button>
-    </div>
 
     <div class="volume">
       <span>🔈</span>
@@ -181,8 +191,15 @@
   </section>
 
   <section class="plists-col">
-    <button class="link-btn" id="plistBtn" disabled>your playlists</button>
-    <div class="plists" id="plists"></div>
+    <div id="plistView">
+      <button class="link-btn" id="plistBtn" disabled>your playlists</button>
+      <div class="plists" id="plists"></div>
+    </div>
+    <div id="trackView" hidden>
+      <button class="link-btn" id="backBtn">← playlists</button>
+      <div class="track-head" id="trackHead"></div>
+      <div class="plists" id="tracks"></div>
+    </div>
   </section>
 </main>
 
@@ -208,10 +225,13 @@ const $ = (id) => document.getElementById(id);
 const title = $("title"), artist = $("artist"), art = $("art"),
       bgArt = $("bg-art"), pos = $("pos"), dur = $("dur"),
       playBtn = $("play"), prevBtn = $("prev"), nextBtn = $("next"),
+      shuffleBtn = $("shuffle"), repeatBtn = $("repeat"),
       volume = $("volume"), volLabel = $("volLabel"),
       seek = $("seek"),
       meta = $("meta"), statusEl = $("status"), toastEl = $("toast"),
       plistBtn = $("plistBtn"), plists = $("plists"), logoutBtn = $("logoutBtn"),
+      plistView = $("plistView"), trackView = $("trackView"),
+      backBtn = $("backBtn"), trackHead = $("trackHead"), tracks = $("tracks"),
       debugEl = $("debug");
 
 const DEBUG = new URLSearchParams(location.search).get("debug") !== null;
@@ -229,6 +249,9 @@ let player = null;
 let deviceId = null;
 let current = null; // { paused, position, duration }
 let seeking = false;
+let shuffleOn = false;
+let repeatMode = "off"; // off | context | track
+let currentPlaylist = null; // { id, name, tracks }
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -274,7 +297,8 @@ function render(track, position, duration, paused) {
   updatePos(position, duration);
   playBtn.textContent = paused ? "▶" : "⏸";
   document.body.classList.toggle("playing", !paused);
-  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = plistBtn.disabled = false;
+  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
+    repeatBtn.disabled = plistBtn.disabled = false;
 }
 
 function updatePos(position, duration) {
@@ -320,6 +344,9 @@ function initPlayer() {
     const t = s.track_window.current_track;
     log("state:", s.paused ? "PAUSED" : "PLAYING", "pos=" + s.position, "track=" + t.name);
     current = { paused: s.paused, position: s.position, duration: s.duration };
+    shuffleOn = !!s.shuffle;
+    repeatMode = s.repeat_mode || "off";
+    setModeUI();
     render(
       {
         name: t.name,
@@ -456,6 +483,34 @@ playBtn.addEventListener("click", async () => {
 prevBtn.addEventListener("click", () => player && player.previousTrack());
 nextBtn.addEventListener("click", () => player && player.nextTrack());
 
+// ---- shuffle / repeat -------------------------------------------------------
+function setModeUI() {
+  shuffleBtn.classList.toggle("on", shuffleOn);
+  repeatBtn.classList.toggle("on", repeatMode !== "off");
+  repeatBtn.textContent = repeatMode === "track" ? "🔁1" : "🔁";
+  repeatBtn.title =
+    repeatMode === "track"
+      ? "Repeat one"
+      : repeatMode === "context"
+        ? "Repeat all"
+        : "Repeat off";
+}
+
+shuffleBtn.addEventListener("click", () => {
+  if (!player) return;
+  shuffleOn = !shuffleOn;
+  setModeUI();
+  player.setShuffle(shuffleOn).catch(() => {});
+});
+
+repeatBtn.addEventListener("click", () => {
+  if (!player) return;
+  const modes = ["off", "context", "track"];
+  repeatMode = modes[(modes.indexOf(repeatMode) + 1) % modes.length];
+  setModeUI();
+  player.setRepeat(repeatMode).catch(() => {});
+});
+
 volume.addEventListener("input", () => {
   volLabel.textContent = volume.value + "%";
   if (player) player.setVolume(volume.value / 100);
@@ -509,16 +564,52 @@ async function loadPlaylists() {
         '<div class="pl-main"><div class="pl-name"></div><div class="pl-sub"></div></div>';
       el.querySelector(".pl-name").textContent = p.name;
       el.querySelector(".pl-sub").textContent = p.owner;
-      el.addEventListener("click", () => startPlaylist(p.id, p.name));
+      el.addEventListener("click", () => openPlaylist(p));
       plists.appendChild(el);
     }
   } catch (e) { /* transient */ }
 }
 
-async function startPlaylist(id, name) {
-  log("click: playlist", name, id);
-  currentPlaylistName = name;
-  setStatus("starting " + name + "…");
+async function openPlaylist(p) {
+  log("open playlist:", p.name, p.id);
+  currentPlaylistName = p.name;
+  setStatus("loading tracks…");
+  try {
+    const r = await api("/player/playlist?id=" + encodeURIComponent(p.id));
+    if (r && r.error) throw new Error(r.error);
+    currentPlaylist = { id: p.id, name: p.name, tracks: r.tracks || [] };
+    renderTracks();
+    plistView.hidden = true;
+    trackView.hidden = false;
+    setStatus("ready");
+  } catch (e) {
+    setStatus("failed to load tracks: " + ((e && e.message) || e), true);
+  }
+}
+
+function renderTracks() {
+  trackHead.textContent = currentPlaylist.name;
+  tracks.innerHTML = "";
+  currentPlaylist.tracks.forEach((tr, i) => {
+    const el = document.createElement("div");
+    el.className = "pl-item";
+    el.innerHTML =
+      '<span class="trk-idx">' + (i + 1) + "</span>" +
+      (tr.image ? `<img src="${tr.image}" alt="">` : '<div class="noimg">♪</div>') +
+      '<div class="pl-main"><div class="pl-name"></div><div class="pl-sub"></div></div>' +
+      '<span class="trk-dur">' + fmt(tr.duration_ms) + "</span>";
+    el.querySelector(".pl-name").textContent = tr.name;
+    el.querySelector(".pl-sub").textContent = tr.artists;
+    el.addEventListener("click", () => playTrack(i));
+    tracks.appendChild(el);
+  });
+}
+
+async function playTrack(idx) {
+  const tr = currentPlaylist.tracks[idx];
+  if (!tr) return;
+  log("play track:", tr.name, "in", currentPlaylist.name);
+  setStatus("starting " + tr.name + "…");
   try {
     await ensurePlayer();
     const r = await api("/control/play", {
@@ -526,23 +617,29 @@ async function startPlaylist(id, name) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         device_id: deviceId,
-        context_uri: "spotify:playlist:" + id,
+        context_uri: "spotify:playlist:" + currentPlaylist.id,
+        offset: idx,
       }),
     });
     if (r && r.error) throw new Error(r.error);
     await ensureSdkResumed();
-    meta.textContent = "playing · " + name;
-    toast("playing " + name);
+    meta.textContent = "playing · " + currentPlaylist.name;
+    toast("playing " + tr.name);
   } catch (e) {
     const msg = String((e && e.message) || e);
     setStatus(
       msg.includes("404") || msg.includes("active device")
         ? "no active device — keep this tab open, then retry"
-        : "failed to start playlist: " + msg,
+        : "failed to play: " + msg,
       true,
     );
   }
 }
+
+backBtn.addEventListener("click", () => {
+  trackView.hidden = true;
+  plistView.hidden = false;
+});
 
 plistBtn.addEventListener("click", () => {
   plists.hidden = !plists.hidden;
@@ -556,7 +653,8 @@ plistBtn.addEventListener("click", () => {
 // Connect flow + boot
 // ---------------------------------------------------------------------------
 function showConnect() {
-  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = plistBtn.disabled = true;
+  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
+    repeatBtn.disabled = plistBtn.disabled = true;
   volume.disabled = true;
   seek.disabled = true;
   logoutBtn.hidden = true;
@@ -591,7 +689,8 @@ function showConnect() {
   }
   // Lazy SDK init: the player is created inside the first click so the audio
   // element is autoplay-activated. Enable controls now; playback begins on tap.
-  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = plistBtn.disabled = false;
+  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
+    repeatBtn.disabled = plistBtn.disabled = false;
   volume.disabled = false;
   seek.disabled = false;
   logoutBtn.hidden = false;

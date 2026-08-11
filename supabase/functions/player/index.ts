@@ -7,6 +7,7 @@ import { handlePreflight, json } from "../_shared/cors.ts";
 import {
   db,
   getNowPlaying,
+  getPlaylistTracks,
   getPlaylists,
   getValidTokens,
   SpotErr,
@@ -36,6 +37,13 @@ Deno.serve(async (req) => {
     // ---- the user's playlists (for the site's playlist browser) ------------
     if (req.method === "GET" && action === "playlists") {
       return json({ playlists: await getPlaylists() });
+    }
+
+    // ---- tracks inside a playlist (for the drill-down view) ----------------
+    if (req.method === "GET" && action === "playlist") {
+      const id = url.searchParams.get("id");
+      if (!id) return json({ error: "id required" }, 400);
+      return json({ tracks: await getPlaylistTracks(id) });
     }
 
     // ---- register the browser's Web Playback SDK device -------------------

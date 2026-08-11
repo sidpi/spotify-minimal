@@ -228,6 +228,7 @@ export async function getNowPlaying(): Promise<object> {
 export async function playPlaylist(
   deviceId?: string,
   contextUri?: string,
+  offsetPosition?: number,
 ): Promise<void> {
   let uri = contextUri;
   if (!uri) {
@@ -243,13 +244,59 @@ export async function playPlaylist(
   const qs = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
   await spotifyFetch(`/me/player/play${qs}`, {
     method: "PUT",
-    body: JSON.stringify({ context_uri: finalUri, offset: { position: 0 } }),
+    body: JSON.stringify({
+      context_uri: finalUri,
+      offset: { position: offsetPosition ?? 0 },
+    }),
   });
   if (deviceId) {
     await db
       .from("app_state")
       .upsert({ id: 1, device_id: deviceId, updated_at: new Date().toISOString() });
   }
+}
+
+/**
+ * Slim track list for a playlist.
+ *
+ * Spotify's current API embeds the playlist items in the playlist details
+ * object (top-level `items` paging object, each entry's track under `item`)
+ * and the separate `/playlists/{id}/tracks` endpoint returns 403.
+ */
+export async function getPlaylistTracks(playlistId: string): Promise<object[]> {
+  const data = await spotifyFetch(`/playlists/${playlistId}`);
+  const entries: {
+    item?: {
+      id: string;
+      name: string;
+      artists: { name: string }[];
+      album: { images: { url: string }[] };
+      duration_ms: number;
+      uri: string;
+    } | null;
+    track?: {
+      id: string;
+      name: string;
+      artists: { name: string }[];
+      album: { images: { url: string }[] };
+      duration_ms: number;
+      uri: string;
+    } | null;
+  }[] = data?.items?.items ?? [];
+  return entries
+    .map((entry) => {
+      const tr = entry.item ?? entry.track ?? null;
+      if (!tr) return null; // unavailable tracks come back null
+      return {
+        id: tr.id,
+        name: tr.name,
+        artists: (tr.artists ?? []).map((a) => a.name).join(", "),
+        image: tr.album?.images?.[0]?.url ?? "",
+        duration_ms: tr.duration_ms,
+        uri: tr.uri,
+      };
+    })
+    .filter((t: object | null): t is object => t !== null);
 }
 
 /** Slim shape of the user's playlists (GET /v1/me/playlists). */

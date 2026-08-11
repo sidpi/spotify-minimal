@@ -28,8 +28,8 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "play": {
-        const { device_id, context_uri } = await req.json().catch(() => ({}));
-        await playPlaylist(device_id, context_uri);
+        const { device_id, context_uri, offset } = await req.json().catch(() => ({}));
+        await playPlaylist(device_id, context_uri, offset);
         return json({ ok: true });
       }
       case "pause":
