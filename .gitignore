@@ -1,0 +1,13 @@
+# secrets
+.env
+.env.local
+.env.production
+
+# node
+node_modules/
+
+# supabase local runtime
+supabase/.temp/
+
+# misc
+.DS_Store
