@@ -264,55 +264,63 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 // Web Playback SDK
 // ---------------------------------------------------------------------------
-function initPlayer(accessToken) {
-  window.onSpotifyWebPlaybackSDKReady = () => {
-    player = new Spotify.Player({
-      name: "minimal player",
-      getOAuthToken: (cb) =>
-        api("/player/token").then((r) => cb(r.__unauthorized ? "" : r.access_token)),
-      volume: volume.value / 100,
-    });
+function initPlayer() {
+  player = new Spotify.Player({
+    name: "minimal player",
+    getOAuthToken: (cb) =>
+      api("/player/token").then((r) =>
+        cb(typeof r.access_token === "string" ? r.access_token : "")),
+    volume: volume.value / 100,
+  });
 
-    player.addListener("ready", async ({ device_id }) => {
-      deviceId = device_id;
-      api("/player/device", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_id }),
-      });
-      // The SDK is ready — enable controls immediately. Previously these were
-      // only enabled by player_state_changed, which never fires before the
-      // first play: a chicken-and-egg that left the button permanently gray.
-      playBtn.disabled = prevBtn.disabled = nextBtn.disabled = plistBtn.disabled = false;
-      volume.disabled = false;
-      setStatus("ready");
-      await refreshNowPlaying();
+  player.addListener("ready", async ({ device_id }) => {
+    deviceId = device_id;
+    api("/player/device", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id }),
     });
+    setStatus("ready");
+    await refreshNowPlaying();
+  });
 
-    player.addListener("player_state_changed", (s) => {
-      if (!s) return;
-      const t = s.track_window.current_track;
-      current = { paused: s.paused, position: s.position, duration: s.duration };
-      render(
-        {
-          name: t.name,
-          artists: (t.artists || []).map((a) => a.name).join(", "),
-          image: t.album?.images?.[0]?.url,
-        },
-        s.position, s.duration, s.paused,
-      );
-    });
+  player.addListener("player_state_changed", (s) => {
+    if (!s) return;
+    const t = s.track_window.current_track;
+    current = { paused: s.paused, position: s.position, duration: s.duration };
+    render(
+      {
+        name: t.name,
+        artists: (t.artists || []).map((a) => a.name).join(", "),
+        image: t.album?.images?.[0]?.url,
+      },
+      s.position, s.duration, s.paused,
+    );
+  });
 
-    player.addListener("initialization_error", () => setStatus("SDK init error", true));
-    player.addListener("authentication_error", () =>
-      setStatus("Auth error — reconnect", true));
-    player.addListener("account_error", () => setStatus("Spotify Premium required", true));
-    player.addListener("not_ready", () => setStatus("player disconnected", true));
-    player.addListener("playback_error", (e) =>
-      setStatus("playback error: " + ((e && e.message) || "unknown"), true));
-    player.connect();
-  };
-  if (window.Spotify) window.onSpotifyWebPlaybackSDKReady();
+  player.addListener("initialization_error", () => setStatus("SDK init error", true));
+  player.addListener("authentication_error", () =>
+    setStatus("Auth error — reconnect", true));
+  player.addListener("account_error", () => setStatus("Spotify Premium required", true));
+  player.addListener("not_ready", () => setStatus("player disconnected", true));
+  player.addListener("playback_error", (e) =>
+    setStatus("playback error: " + ((e && e.message) || "unknown"), true));
+}
+
+// Create + connect the SDK player inside the first user gesture. Creating it
+// at page load leaves Chrome/Edge free to suspend the audio after ~10s; a
+// player born inside a click is granted autoplay activation from the start.
+async function ensurePlayer() {
+  if (player) return;
+  if (!window.Spotify) throw new Error("SDK failed to load");
+  setStatus("connecting player…");
+  initPlayer();
+  await player.connect().catch(() => {});
+  const deadline = Date.now() + 8000;
+  while (!deviceId && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!deviceId) throw new Error("player did not become ready");
 }
 
 // ---------------------------------------------------------------------------
@@ -356,23 +364,26 @@ async function ensureSdkResumed() {
 
 // ---------------------------------------------------------------------------
 // Controls
-// ---------------------------------------------------------------------------
-playBtn.addEventListener("click", async () => {
-  if (!player) return;
+// ---------------------------------------------------------------------------playBtn.addEventListener("click", async () => {
+  try {
+    await ensurePlayer();
+  } catch (e) {
+    setStatus("player failed: " + ((e && e.message) || e), true);
+    return;
+  }
   const s = await player.getCurrentState();
-  if (!s) {      // Nothing loaded yet — start the playlist server-side on this device.
-      // connect() inside the click gesture grants autoplay activation.
-      setStatus("starting playlist…");
-      try {
-        await player.connect().catch(() => {});
-        const r = await api("/control/play", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ device_id: deviceId }),
-        });
-        if (r && r.error) throw new Error(r.error);
-        await ensureSdkResumed();
-      } catch (e) {
+  if (!s) {
+    // Nothing loaded yet — start the playlist server-side on this device.
+    setStatus("starting playlist…");
+    try {
+      const r = await api("/control/play", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId }),
+      });
+      if (r && r.error) throw new Error(r.error);
+      await ensureSdkResumed();
+    } catch (e) {
       const msg = String((e && e.message) || e);
       setStatus(
         msg.includes("404") || msg.includes("active device")
@@ -427,8 +438,7 @@ async function startPlaylist(id, name) {
   currentPlaylistName = name;
   setStatus("starting " + name + "…");
   try {
-    // Same gesture-activation fix as the play button (see above).
-    await player.connect().catch(() => {});
+    await ensurePlayer();
     const r = await api("/control/play", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -488,7 +498,11 @@ function showConnect() {
     showConnect();
     return;
   }
-  initPlayer(t.access_token);
+  // Lazy SDK init: the player is created inside the first click so the audio
+  // element is autoplay-activated. Enable controls now; playback begins on tap.
+  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = plistBtn.disabled = false;
+  volume.disabled = false;
+  setStatus("tap play or a playlist to start");
   refreshNowPlaying();
 })();
 </script>
