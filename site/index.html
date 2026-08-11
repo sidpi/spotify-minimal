@@ -170,8 +170,8 @@
   .link-btn:hover { color: var(--fg); border-color: var(--dim); }
   .link-btn:disabled { opacity: .4; cursor: default; }
   .player-foot {
-    display: flex; align-items: center; justify-content: center;
-    gap: 14px; margin-top: 18px; flex-wrap: wrap;
+    position: fixed; top: 18px; right: 18px; z-index: 4;
+    display: flex; align-items: center; gap: 10px;
   }
   #plistFocusBtn { display: none; }
   main.focused #plistFocusBtn {
@@ -322,10 +322,6 @@
 
     <div class="meta" id="meta"></div>
     <div id="status"></div>
-    <div class="player-foot">
-      <button class="link-btn" id="plistFocusBtn">your playlists</button>
-      <button class="link-btn" id="logoutBtn" hidden>log out</button>
-    </div>
   </section>
 
   <section class="plists-col">
@@ -339,6 +335,11 @@
       <div class="plists" id="tracks"></div>
     </div>
   </section>
+
+  <div class="player-foot">
+    <button class="link-btn" id="plistFocusBtn">your playlists</button>
+    <button class="link-btn" id="logoutBtn" hidden>log out</button>
+  </div>
 </main>
 
 <div id="toast"></div>
