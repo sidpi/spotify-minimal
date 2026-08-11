@@ -280,6 +280,11 @@ function initPlayer(accessToken) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ device_id }),
       });
+      // The SDK is ready — enable controls immediately. Previously these were
+      // only enabled by player_state_changed, which never fires before the
+      // first play: a chicken-and-egg that left the button permanently gray.
+      playBtn.disabled = prevBtn.disabled = nextBtn.disabled = plistBtn.disabled = false;
+      volume.disabled = false;
       setStatus("ready");
       await refreshNowPlaying();
     });
@@ -335,12 +340,21 @@ playBtn.addEventListener("click", async () => {
     // Nothing loaded yet — start the playlist server-side on this device.
     setStatus("starting playlist…");
     try {
-      await api("/control/play", {
+      const r = await api("/control/play", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ device_id: deviceId }),
       });
-    } catch (e) { setStatus("failed to start playback", true); }
+      if (r && r.error) throw new Error(r.error);
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      setStatus(
+        msg.includes("404") || msg.includes("active device")
+          ? "no active device — keep this tab open, then retry"
+          : "failed to start playback: " + msg,
+        true,
+      );
+    }
     return;
   }
   s.paused ? player.resume() : player.pause();
@@ -387,7 +401,7 @@ async function startPlaylist(id, name) {
   currentPlaylistName = name;
   setStatus("starting " + name + "…");
   try {
-    await api("/control/play", {
+    const r = await api("/control/play", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -395,11 +409,18 @@ async function startPlaylist(id, name) {
         context_uri: "spotify:playlist:" + id,
       }),
     });
+    if (r && r.error) throw new Error(r.error);
     meta.textContent = "playing · " + name;
     toast("playing " + name);
     plists.hidden = true;
   } catch (e) {
-    setStatus("failed to start playlist", true);
+    const msg = String((e && e.message) || e);
+    setStatus(
+      msg.includes("404") || msg.includes("active device")
+        ? "no active device — keep this tab open, then retry"
+        : "failed to start playlist: " + msg,
+      true,
+    );
   }
 }
 
