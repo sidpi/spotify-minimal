@@ -345,16 +345,50 @@ export async function getPlaylistTracks(playlistId: string): Promise<{
 }
 
 /**
+ * Walk a Spotify paging object, collecting up to `max` items across pages.
+ * `path` must not already contain a query string (all our callers pass bare
+ * endpoint paths like `/me/tracks`).
+ */
+async function paginate(path: string, max = 200): Promise<any[]> {
+  const items: any[] = [];
+  let offset = 0;
+  while (items.length < max) {
+    const data = await spotifyFetch(`${path}?limit=50&offset=${offset}`);
+    const batch = data?.items ?? [];
+    items.push(...batch);
+    if (!batch.length || items.length >= (data?.total ?? 0)) break;
+    offset += batch.length;
+  }
+  return items.slice(0, max);
+}
+
+/**
  * Slim track list of the user's Liked Songs (requires `user-library-read`,
  * added to the OAuth scope list — reconnect once if the list won't load).
+ * Paginates a few pages so the list shows more than the default 50.
  */
 export async function getLikedTracks(): Promise<{ tracks: object[] }> {
-  const data = await spotifyFetch("/me/tracks?limit=50");
+  const items = await paginate("/me/tracks", 200);
   return {
-    tracks: (data?.items ?? [])
+    tracks: items
       .map((e: TrackEntry) => slimTrack(e.track))
       .filter((t: object | null): t is object => t !== null),
   };
+}
+
+/**
+ * Find the user's current "daylist". Spotify regenerates it several times a
+ * day under a brand-new playlist id, so any pinned id goes 404 within hours.
+ * The live one always sits in the user's own playlist list (its name starts
+ * with "daylist"), which is exactly what the app's Made For You hub shows.
+ */
+export async function getDaylist(): Promise<{ id: string; name: string } | null> {
+  const items = await paginate("/me/playlists", 200);
+  const daylist = items.find((p) =>
+    typeof p?.name === "string" && p.name.toLowerCase().startsWith("daylist")
+  );
+  if (!daylist?.id) return null;
+  return { id: daylist.id, name: daylist.name };
 }
 
 /** Slim shape of the user's playlists (GET /v1/me/playlists). */

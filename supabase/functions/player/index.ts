@@ -6,6 +6,7 @@
 import { handlePreflight, json } from "../_shared/cors.ts";
 import {
   db,
+  getDaylist,
   getLikedTracks,
   getNowPlaying,
   getPlaylistTracks,
@@ -65,6 +66,22 @@ Deno.serve(async (req) => {
     // ---- the user's Liked Songs (for the drill-down view) ------------------
     if (req.method === "GET" && action === "liked") {
       return json(await getLikedTracks());
+    }
+
+    // ---- the user's current daylist ----------------------------------------
+    // The daylist playlist id rotates several times a day, so a pinned id
+    // 404s as soon as the day rolls over. Resolve the live one from the
+    // user's own playlist list each time instead.
+    if (req.method === "GET" && action === "daylist") {
+      const daylist = await getDaylist();
+      if (!daylist) {
+        return json(
+          { error: "no daylist found — open the daylist in the Spotify app once, then retry" },
+          404,
+        );
+      }
+      const { tracks, listable } = await getPlaylistTracks(daylist.id);
+      return json({ id: daylist.id, name: daylist.name, tracks, listable });
     }
 
     // ---- register the browser's Web Playback SDK device -------------------

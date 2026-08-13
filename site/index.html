@@ -863,19 +863,69 @@ async function openLiked() {
     await switchView(trackView, plistView);
     setStatus("ready");
   } catch (e) {
-    // Browsing needs the `user-library-read` scope; playing doesn't. Tell the
-    // user, then still start the collection so the button always does work.
+    // Browsing needs the `user-library-read` scope; older connections made
+    // before the scope existed 403 here. Show a reconnect button in the
+    // track view instead of silently falling back to playback, so the list
+    // can actually appear once they reconnect.
+    renderLikedReconnect();
+    await switchView(trackView, plistView);
     setStatus("couldn't load the list — reconnect Spotify to browse liked songs", true);
-    toast("reconnect Spotify to browse liked songs");
-    playPlaylistNow({ id: "liked", name: "Liked Songs" });
   }
 }
 
+function renderLikedReconnect() {
+  trackHead.textContent = "Liked Songs";
+  tracks.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "pl-item";
+  box.style.cssText = "cursor:default;flex-direction:column;align-items:flex-start;gap:12px;padding:14px";
+  box.innerHTML =
+    "<span class=\"pl-sub\">Browsing your saved songs needs the <b>user-library-read</b> permission, which this Spotify connection predates. Reconnect to grant it — playback keeps working either way.</span>";
+  const reconnect = document.createElement("a");
+  reconnect.className = "link-btn";
+  reconnect.href = API_BASE + "/auth/start";
+  reconnect.textContent = "Reconnect Spotify";
+  reconnect.style.cssText =
+    "margin-top:0;color:var(--fg);border-color:var(--dim);text-decoration:none;display:inline-block";
+  const play = document.createElement("button");
+  play.type = "button";
+  play.className = "link-btn";
+  play.textContent = "▶ play liked songs anyway";
+  play.style.cssText = "margin-top:0";
+  play.addEventListener("click", () =>
+    playPlaylistNow({ id: "liked", name: "Liked Songs" }));
+  box.appendChild(reconnect);
+  box.appendChild(play);
+  tracks.appendChild(box);
+}
+
 // The daily "daylist" Spotify generates for the account — pinned beside the
-// playlists so it's one tap away. Opens the track list like any playlist.
-const DAYLIST_ID = "37i9dQZF1FbGDUeKKyuiKi";
-daylistBtn.addEventListener("click", () =>
-  openPlaylist({ id: DAYLIST_ID, name: "daylist" }));
+// playlists so it's one tap away. Its playlist id rotates several times a
+// day, so a pinned id 404s within hours; resolve the live one server-side.
+daylistBtn.addEventListener("click", () => openDaylist());
+
+async function openDaylist() {
+  log("open daylist");
+  setStatus("loading daylist…");
+  try {
+    const r = await api("/player/daylist");
+    if (r && r.error) throw new Error(r.error);
+    if (!r || !r.id) throw new Error("no daylist on this account");
+    currentPlaylistName = r.name;
+    currentPlaylist = {
+      id: r.id,
+      name: r.name,
+      tracks: r.tracks || [],
+      listable: r.listable !== false,
+    };
+    renderTracks();
+    await switchView(trackView, plistView);
+    setStatus("ready");
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    setStatus("failed to load daylist: " + msg, true);
+  }
+}
 
 function renderTracks() {
   trackHead.textContent = currentPlaylist.name;
