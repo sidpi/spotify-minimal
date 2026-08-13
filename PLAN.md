@@ -79,6 +79,7 @@ user-read-playback-state     → show current track / playing state
 user-modify-playback-state   → play, pause, skip
 user-read-currently-playing  → what's on right now
 playlist-read-private        → your private playlists
+user-library-read            → browse your Liked Songs list
 ```
 
 ### 4.4 The two APIs

@@ -21,6 +21,7 @@ export const SCOPES = [
   "user-modify-playback-state",
   "user-read-currently-playing",
   "playlist-read-private",
+  "user-library-read", // lets us list Liked Songs so the site can browse them
 ].join(" ");
 
 const env = (name: string): string => Deno.env.get(name) ?? "";
@@ -272,54 +273,86 @@ export async function playPlaylist(
   }
 }
 
+interface TrackShape {
+  id: string;
+  name: string;
+  artists: { name: string }[];
+  album: { images: { url: string }[] };
+  duration_ms: number;
+  uri: string;
+}
+
+interface TrackEntry {
+  item?: TrackShape | null;
+  track?: TrackShape | null;
+}
+
+/** Slim a raw Spotify track into the shape the frontend renders. */
+function slimTrack(tr: TrackShape | null | undefined): object | null {
+  if (!tr) return null; // unavailable tracks come back null
+  return {
+    id: tr.id,
+    name: tr.name,
+    artists: (tr.artists ?? []).map((a: { name: string }) => a.name).join(", "),
+    image: tr.album?.images?.[0]?.url ?? "",
+    duration_ms: tr.duration_ms,
+    uri: tr.uri,
+  };
+}
+
 /**
  * Slim track list for a playlist.
  *
  * Spotify's current API embeds the playlist items in the playlist details
  * object (top-level `items` paging object, each entry's track under `item`)
- * and the separate `/playlists/{id}/tracks` endpoint returns 403. Embedded
- * items only exist for playlists the user owns — for playlists followed from
- * other users, Spotify returns bare metadata with no track list at all.
- * `listable` tells the frontend which case it is.
+ * and, for many playlists, the separate `/playlists/{id}/tracks` endpoint
+ * returns 403. Embedded items only exist for playlists the user owns — for
+ * playlists followed from other users, Spotify usually returns bare metadata
+ * with no track list at all. Spotify-curated playlists (like "daylist")
+ * often still answer the dedicated tracks endpoint, so we try it as a
+ * fallback before giving up. `listable` tells the frontend which case it is.
  */
 export async function getPlaylistTracks(playlistId: string): Promise<{
   tracks: object[];
   listable: boolean;
 }> {
   const data = await spotifyFetch(`/playlists/${playlistId}`);
-  const entries: {
-    item?: {
-      id: string;
-      name: string;
-      artists: { name: string }[];
-      album: { images: { url: string }[] };
-      duration_ms: number;
-      uri: string;
-    } | null;
-    track?: {
-      id: string;
-      name: string;
-      artists: { name: string }[];
-      album: { images: { url: string }[] };
-      duration_ms: number;
-      uri: string;
-    } | null;
-  }[] = data?.items?.items ?? data?.tracks?.items ?? [];
-  return {
-    listable: !!(data?.items || data?.tracks),
-    tracks: entries
-      .map((entry) => {
-        const tr = entry.item ?? entry.track ?? null;
-        if (!tr) return null; // unavailable tracks come back null
+  let entries: TrackEntry[] = data?.items?.items ?? data?.tracks?.items ?? [];
+  if (!entries.length) {
+    // No embedded items (e.g. Spotify-curated playlists) — try the dedicated
+    // tracks endpoint; it still works for many public playlists.
+    try {
+      const tracks = await spotifyFetch(`/playlists/${playlistId}/tracks?limit=50`);
+      entries = tracks?.items ?? [];
+      if (entries.length) {
         return {
-          id: tr.id,
-          name: tr.name,
-          artists: (tr.artists ?? []).map((a) => a.name).join(", "),
-          image: tr.album?.images?.[0]?.url ?? "",
-          duration_ms: tr.duration_ms,
-          uri: tr.uri,
+          listable: true,
+          tracks: entries
+            .map((e) => slimTrack(e.item ?? e.track))
+            .filter((t: object | null): t is object => t !== null),
         };
-      })
+      }
+    } catch (e) {
+      // 403 / no track list — the frontend falls back to play-only.
+    }
+  }
+  return {
+    listable: !!(data?.items || data?.tracks) || entries.length > 0,
+    tracks: entries
+      .map((e) => slimTrack(e.item ?? e.track))
+      .filter((t: object | null): t is object => t !== null),
+  };
+}
+
+/**
+ * Slim track list of the user's Liked Songs (requires `user-library-read`,
+ * added to the OAuth scope list — reconnect once if the list won't load).
+ */
+export async function getLikedTracks(): Promise<{ tracks: object[] }> {
+  const data = await spotifyFetch("/me/tracks?limit=50");
+  return {
+    tracks: (data?.items ?? [])
+      .map((e: TrackEntry) => slimTrack(e.track))
       .filter((t: object | null): t is object => t !== null),
   };
 }

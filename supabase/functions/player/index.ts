@@ -6,6 +6,7 @@
 import { handlePreflight, json } from "../_shared/cors.ts";
 import {
   db,
+  getLikedTracks,
   getNowPlaying,
   getPlaylistTracks,
   getPlaylists,
@@ -59,6 +60,11 @@ Deno.serve(async (req) => {
       const id = url.searchParams.get("id");
       if (!id) return json({ error: "id required" }, 400);
       return json(await getPlaylistTracks(id));
+    }
+
+    // ---- the user's Liked Songs (for the drill-down view) ------------------
+    if (req.method === "GET" && action === "liked") {
+      return json(await getLikedTracks());
     }
 
     // ---- register the browser's Web Playback SDK device -------------------

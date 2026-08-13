@@ -200,6 +200,10 @@
     border-radius: 999px; padding: 8px 18px; font-size: 13px; cursor: pointer;
     margin-top: 18px;
   }
+  .quick-links {
+    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px;
+  }
+  .quick-links .link-btn { margin-top: 0; }
   .link-btn:hover { color: var(--fg); border-color: var(--dim); }
   .link-btn:disabled { opacity: .4; cursor: default; }
   .player-foot {
@@ -367,7 +371,10 @@
   <section class="plists-col">
     <div id="plistView">
       <div class="col-head" id="plistBtn">your playlists</div>
-      <button class="link-btn" id="likedBtn">♥ Liked Songs</button>
+      <div class="quick-links">
+        <button class="link-btn" id="likedBtn">♥ Liked Songs</button>
+        <button class="link-btn" id="daylistBtn">☀ daylist</button>
+      </div>
       <div class="plists" id="plists"></div>
     </div>
     <div id="trackView" hidden>
@@ -414,6 +421,7 @@ const title = $("title"), artist = $("artist"), art = $("art"),
       mainEl = document.querySelector("main"),
       meta = $("meta"), statusEl = $("status"), toastEl = $("toast"),
       plistBtn = $("plistBtn"), plists = $("plists"), likedBtn = $("likedBtn"),
+      daylistBtn = $("daylistBtn"),
       logoutBtn = $("logoutBtn"),
       plistView = $("plistView"), trackView = $("trackView"),
       backBtn = $("backBtn"), trackHead = $("trackHead"), tracks = $("tracks"),
@@ -841,6 +849,34 @@ async function openPlaylist(p) {
   }
 }
 
+// Liked Songs — opens the same drill-down track list as a playlist, so you
+// can pick a specific saved song instead of just playing the whole collection.
+async function openLiked() {
+  log("open liked songs");
+  currentPlaylistName = "Liked Songs";
+  setStatus("loading liked songs…");
+  try {
+    const r = await api("/player/liked");
+    if (r && r.error) throw new Error(r.error);
+    currentPlaylist = { id: "liked", name: "Liked Songs", tracks: r.tracks || [], listable: true };
+    renderTracks();
+    await switchView(trackView, plistView);
+    setStatus("ready");
+  } catch (e) {
+    // Browsing needs the `user-library-read` scope; playing doesn't. Tell the
+    // user, then still start the collection so the button always does work.
+    setStatus("couldn't load the list — reconnect Spotify to browse liked songs", true);
+    toast("reconnect Spotify to browse liked songs");
+    playPlaylistNow({ id: "liked", name: "Liked Songs" });
+  }
+}
+
+// The daily "daylist" Spotify generates for the account — pinned beside the
+// playlists so it's one tap away. Opens the track list like any playlist.
+const DAYLIST_ID = "37i9dQZF1FbGDUeKKyuiKi";
+daylistBtn.addEventListener("click", () =>
+  openPlaylist({ id: DAYLIST_ID, name: "daylist" }));
+
 function renderTracks() {
   trackHead.textContent = currentPlaylist.name;
   tracks.innerHTML = "";
@@ -858,6 +894,14 @@ function renderTracks() {
     btn.addEventListener("click", () => playPlaylistNow(currentPlaylist));
     box.appendChild(btn);
     tracks.appendChild(box);
+    return;
+  }
+  if (!currentPlaylist.tracks.length) {
+    const el = document.createElement("div");
+    el.className = "pl-item";
+    el.style.cssText = "cursor:default";
+    el.innerHTML = '<span class="pl-sub">no tracks here yet</span>';
+    tracks.appendChild(el);
     return;
   }
   currentPlaylist.tracks.forEach((tr, i) => {
@@ -883,12 +927,16 @@ async function playTrack(idx) {
   setStatus("starting " + tr.name + "…");
   try {
     await ensurePlayer();
+    // Liked Songs is a user collection, not a playlist — it needs its own URI.
+    const contextUri = currentPlaylist.id === "liked"
+      ? "spotify:liked"
+      : "spotify:playlist:" + currentPlaylist.id;
     const r = await api("/control/play", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         device_id: deviceId,
-        context_uri: "spotify:playlist:" + currentPlaylist.id,
+        context_uri: contextUri,
         offset: idx,
       }),
     });
@@ -1021,16 +1069,15 @@ plistFocusBtn.addEventListener("click", () => {
   mainEl.classList.remove("focused");
 });
 
-// Liked Songs — a special collection, played by its user collection URI.
-likedBtn.addEventListener("click", () =>
-  playPlaylistNow({ id: "liked", name: "Liked Songs" }));
+// Liked Songs — open the track list so you can pick a saved song.
+likedBtn.addEventListener("click", () => openLiked());
 
 // ---------------------------------------------------------------------------
 // Connect flow + boot
 // ---------------------------------------------------------------------------
 function showConnect() {
   playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
-    repeatBtn.disabled = plistBtn.disabled = likedBtn.disabled = true;
+    repeatBtn.disabled = plistBtn.disabled = likedBtn.disabled = daylistBtn.disabled = true;
   volume.disabled = true;
   seek.disabled = true;
   logoutBtn.hidden = true;
@@ -1064,6 +1111,11 @@ function showConnect() {
     showConnect();
     return;
   }
+  // Browsing Liked Songs needs `user-library-read`; playback never does. Old
+  // sessions without it still play — just nudge once to reconnect when wanted.
+  if (t.scopes && !String(t.scopes).split(" ").includes("user-library-read")) {
+    toast("reconnect Spotify to browse liked songs");
+  }
   // Show which Spotify account is connected, next to log out.
   whoami.textContent = "";
   if (t.display_name) {
@@ -1076,7 +1128,7 @@ function showConnect() {
   // Lazy SDK init: the player is created inside the first click so the audio
   // element is autoplay-activated. Enable controls now; playback begins on tap.
   playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
-    repeatBtn.disabled = plistBtn.disabled = likedBtn.disabled = false;
+    repeatBtn.disabled = plistBtn.disabled = likedBtn.disabled = daylistBtn.disabled = false;
   volume.disabled = false;
   volBtn.textContent = volume.value == 0 ? "🔇" : volume.value < 50 ? "🔈" : "🔊";
   seek.disabled = false;
