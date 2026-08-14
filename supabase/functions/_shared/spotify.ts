@@ -104,6 +104,7 @@ export async function saveTokens(t: {
   if (session) {
     const { error } = await db.from("user_tokens").upsert({
       user_id: session.user,
+      user_secret: session.secret, // must persist — it proves this browser owns the session
       refresh_token: t.refreshToken,
       access_token: t.accessToken,
       expires_at: t.expiresAt,
