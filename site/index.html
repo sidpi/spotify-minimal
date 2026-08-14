@@ -486,6 +486,11 @@
     box-shadow: 0 12px 26px rgba(0,0,0,.45);
   }
   a.connect:active { transform: scale(.96); }
+  a.switch-account {
+    display: block; margin-top: 12px;
+    color: var(--dim); font-size: 12px; text-decoration: underline;
+  }
+  a.switch-account:hover { color: var(--fg); }
 </style>
 </head>
 <body>
@@ -1400,7 +1405,19 @@ function showConnect() {
   a.textContent = "Connect Spotify";
   const old = document.querySelector("a.connect");
   if (old) old.remove();
+  const oldSwitch = document.querySelector("a.switch-account");
+  if (oldSwitch) oldSwitch.remove();
   statusEl.appendChild(a);
+  // Logging out here only clears *our* session — Spotify's own web login
+  // persists, so the next Connect would silently reuse the same account.
+  // This clears Spotify's session so the login page appears again.
+  const sw = document.createElement("a");
+  sw.className = "switch-account";
+  sw.href = "https://accounts.spotify.com/en/logout";
+  sw.target = "_blank";
+  sw.rel = "noopener";
+  sw.textContent = "log in with a different account";
+  statusEl.appendChild(sw);
 }
 
 (async function boot() {

@@ -82,6 +82,10 @@ export function authorizeUrl(state: string, challenge: string): string {
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
+    // Always show Spotify's login/consent page — without it Spotify silently
+    // reuses a previous approval and the user can never sign in as a
+    // different account after logging out here.
+    show_dialog: "true",
   });
   return `${AUTH_ENDPOINT}?${params}`;
 }
