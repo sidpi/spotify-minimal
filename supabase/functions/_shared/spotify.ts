@@ -31,6 +31,23 @@ export const redirectUri = () => env("SPOTIFY_REDIRECT_URI");
 export const siteUrl = () => env("SITE_URL") ?? "http://localhost:8888";
 
 // ---------------------------------------------------------------------------
+// Per-user sessions
+// ---------------------------------------------------------------------------
+// The site identifies each visitor with an anonymous id (x-app-user) plus a
+// server-issued secret (x-app-secret) that is only ever handed to the browser
+// via a URL fragment during OAuth. The secret makes the public id unforgeable.
+export interface Session {
+  user: string;
+  secret: string;
+}
+
+export function getSession(req: Request): Session | null {
+  const user = req.headers.get("x-app-user");
+  if (!user) return null; // legacy request — falls back to the shared row
+  return { user, secret: req.headers.get("x-app-secret") ?? "" };
+}
+
+// ---------------------------------------------------------------------------
 // PKCE helpers (Deno edge runtime has WebCrypto)
 // ---------------------------------------------------------------------------
 export function base64url(data: ArrayBuffer | string): string {
@@ -83,7 +100,19 @@ export async function saveTokens(t: {
   refreshToken: string;
   expiresAt: number;
   scope?: string;
-}): Promise<void> {
+}, session?: Session | null): Promise<void> {
+  if (session) {
+    const { error } = await db.from("user_tokens").upsert({
+      user_id: session.user,
+      refresh_token: t.refreshToken,
+      access_token: t.accessToken,
+      expires_at: t.expiresAt,
+      scope: t.scope ?? null,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) throw error;
+    return;
+  }
   const { error } = await db.from("app_state").upsert({
     id: 1,
     refresh_token: t.refreshToken,
@@ -96,7 +125,32 @@ export async function saveTokens(t: {
 }
 
 /** Returns cached tokens if fresh, otherwise refreshes and stores. */
-export async function getValidTokens(): Promise<Tokens | null> {
+export async function getValidTokens(session?: Session | null): Promise<Tokens | null> {
+  if (session) {
+    const { data, error } = await db
+      .from("user_tokens")
+      .select("refresh_token, access_token, expires_at, scope, user_secret")
+      .eq("user_id", session.user)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.refresh_token) return null;
+    // The id alone is public; only the holder of the matching secret may use it.
+    if (!session.secret || data.user_secret !== session.secret) {
+      throw new SpotErr(403, "session_invalid");
+    }
+    const expiresAt = (data.expires_at as number | null) ?? 0;
+    const hasScope = !!(data.scope && data.scope.includes("streaming"));
+    if (data.access_token && Date.now() < expiresAt && hasScope) {
+      return {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        scope: data.scope,
+      };
+    }
+    // Expired, or we don't know the granted scopes yet — refresh to find out.
+    return refreshTokens(data.refresh_token, session);
+  }
+  // Legacy single-user row (requests that carry no identity at all).
   const { data, error } = await db
     .from("app_state")
     .select("refresh_token, access_token, expires_at, scope")
@@ -118,7 +172,7 @@ export async function getValidTokens(): Promise<Tokens | null> {
   return refreshTokens(data.refresh_token);
 }
 
-export async function refreshTokens(refreshToken: string): Promise<Tokens> {
+export async function refreshTokens(refreshToken: string, session?: Session | null): Promise<Tokens> {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
@@ -140,7 +194,7 @@ export async function refreshTokens(refreshToken: string): Promise<Tokens> {
   await saveTokens({
     ...next,
     expiresAt: Date.now() + (t.expires_in ?? 3600) * 1000,
-  });
+  }, session);
   return next;
 }
 
@@ -148,7 +202,12 @@ export async function refreshTokens(refreshToken: string): Promise<Tokens> {
 export async function exchangeCode(
   code: string,
   verifier: string,
-): Promise<void> {
+): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  scope: string;
+  expiresAt: number;
+}> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
@@ -166,12 +225,12 @@ export async function exchangeCode(
     throw new Error(`Spotify code exchange failed (${res.status})`);
   }
   const t = await res.json();
-  await saveTokens({
+  return {
     accessToken: t.access_token,
     refreshToken: t.refresh_token,
     expiresAt: Date.now() + (t.expires_in ?? 3600) * 1000,
     scope: t.scope ?? "",
-  });
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -186,8 +245,9 @@ export class SpotErr extends Error {
 export async function spotifyFetch(
   path: string,
   init: RequestInit = {},
+  session?: Session | null,
 ): Promise<any | null> {
-  const tokens = await getValidTokens();
+  const tokens = await getValidTokens(session);
   if (!tokens) throw new SpotErr(401, "not_connected");
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -212,8 +272,8 @@ export async function spotifyFetch(
 }
 
 /** Slim now-playing shape the frontend polls every ~10s. */
-export async function getNowPlaying(): Promise<object> {
-  const data = await spotifyFetch("/me/player/currently-playing");
+export async function getNowPlaying(session?: Session | null): Promise<object> {
+  const data = await spotifyFetch("/me/player/currently-playing", {}, session);
   if (!data?.item) return { playing: false, track: null, progress_ms: 0 };
   const item = data.item;
   return {
@@ -238,23 +298,34 @@ export async function playPlaylist(
   deviceId?: string,
   contextUri?: string,
   offsetPosition?: number,
+  session?: Session | null,
 ): Promise<void> {
   let uri = contextUri;
   // Liked Songs is a special collection, not a playlist: resolve it to
   // spotify:user:<id>:collection using the connected user's Spotify id.
   if (uri === "spotify:liked" || uri === "liked") {
-    const me = await spotifyFetch("/me");
+    const me = await spotifyFetch("/me", {}, session);
     const userId = me?.id ?? "";
     if (!userId) throw new SpotErr(400, "could not resolve your Spotify user");
     uri = `spotify:user:${userId}:collection`;
   }
   if (!uri) {
-    const { data } = await db
-      .from("app_state")
-      .select("playlist_id")
-      .eq("id", 1)
-      .maybeSingle();
-    uri = data?.playlist_id ?? env("PLAYLIST_ID");
+    if (session) {
+      const { data } = await db
+        .from("user_tokens")
+        .select("playlist_id")
+        .eq("user_id", session.user)
+        .maybeSingle();
+      uri = data?.playlist_id ?? "";
+    }
+    if (!uri) {
+      const { data } = await db
+        .from("app_state")
+        .select("playlist_id")
+        .eq("id", 1)
+        .maybeSingle();
+      uri = data?.playlist_id ?? env("PLAYLIST_ID");
+    }
   }
   if (!uri) throw new SpotErr(400, "no playlist configured");
   const finalUri = uri.startsWith("spotify:") ? uri : `spotify:playlist:${uri}`;
@@ -265,11 +336,18 @@ export async function playPlaylist(
       context_uri: finalUri,
       offset: { position: offsetPosition ?? 0 },
     }),
-  });
+  }, session);
   if (deviceId) {
-    await db
-      .from("app_state")
-      .upsert({ id: 1, device_id: deviceId, updated_at: new Date().toISOString() });
+    if (session) {
+      await db
+        .from("user_tokens")
+        .update({ device_id: deviceId, updated_at: new Date().toISOString() })
+        .eq("user_id", session.user);
+    } else {
+      await db
+        .from("app_state")
+        .upsert({ id: 1, device_id: deviceId, updated_at: new Date().toISOString() });
+    }
   }
 }
 
@@ -312,17 +390,17 @@ function slimTrack(tr: TrackShape | null | undefined): object | null {
  * often still answer the dedicated tracks endpoint, so we try it as a
  * fallback before giving up. `listable` tells the frontend which case it is.
  */
-export async function getPlaylistTracks(playlistId: string): Promise<{
+export async function getPlaylistTracks(playlistId: string, session?: Session | null): Promise<{
   tracks: object[];
   listable: boolean;
 }> {
-  const data = await spotifyFetch(`/playlists/${playlistId}`);
+  const data = await spotifyFetch(`/playlists/${playlistId}`, {}, session);
   let entries: TrackEntry[] = data?.items?.items ?? data?.tracks?.items ?? [];
   if (!entries.length) {
     // No embedded items (e.g. Spotify-curated playlists) — try the dedicated
     // tracks endpoint; it still works for many public playlists.
     try {
-      const tracks = await spotifyFetch(`/playlists/${playlistId}/tracks?limit=50`);
+      const tracks = await spotifyFetch(`/playlists/${playlistId}/tracks?limit=50`, {}, session);
       entries = tracks?.items ?? [];
       if (entries.length) {
         return {
@@ -349,11 +427,11 @@ export async function getPlaylistTracks(playlistId: string): Promise<{
  * `path` must not already contain a query string (all our callers pass bare
  * endpoint paths like `/me/tracks`).
  */
-async function paginate(path: string, max = 200): Promise<any[]> {
+async function paginate(path: string, max = 200, session?: Session | null): Promise<any[]> {
   const items: any[] = [];
   let offset = 0;
   while (items.length < max) {
-    const data = await spotifyFetch(`${path}?limit=50&offset=${offset}`);
+    const data = await spotifyFetch(`${path}?limit=50&offset=${offset}`, {}, session);
     const batch = data?.items ?? [];
     items.push(...batch);
     if (!batch.length || items.length >= (data?.total ?? 0)) break;
@@ -367,8 +445,8 @@ async function paginate(path: string, max = 200): Promise<any[]> {
  * added to the OAuth scope list — reconnect once if the list won't load).
  * Paginates a few pages so the list shows more than the default 50.
  */
-export async function getLikedTracks(): Promise<{ tracks: object[] }> {
-  const items = await paginate("/me/tracks", 200);
+export async function getLikedTracks(session?: Session | null): Promise<{ tracks: object[] }> {
+  const items = await paginate("/me/tracks", 200, session);
   return {
     tracks: items
       .map((e: TrackEntry) => slimTrack(e.track))
@@ -382,8 +460,8 @@ export async function getLikedTracks(): Promise<{ tracks: object[] }> {
  * The live one always sits in the user's own playlist list (its name starts
  * with "daylist"), which is exactly what the app's Made For You hub shows.
  */
-export async function getDaylist(): Promise<{ id: string; name: string } | null> {
-  const items = await paginate("/me/playlists", 200);
+export async function getDaylist(session?: Session | null): Promise<{ id: string; name: string } | null> {
+  const items = await paginate("/me/playlists", 200, session);
   const daylist = items.find((p) =>
     typeof p?.name === "string" && p.name.toLowerCase().startsWith("daylist")
   );
@@ -392,8 +470,8 @@ export async function getDaylist(): Promise<{ id: string; name: string } | null>
 }
 
 /** Slim shape of the user's playlists (GET /v1/me/playlists). */
-export async function getPlaylists(): Promise<object[]> {
-  const data = await spotifyFetch("/me/playlists?limit=50");
+export async function getPlaylists(session?: Session | null): Promise<object[]> {
+  const data = await spotifyFetch("/me/playlists?limit=50", {}, session);
   // Note: Spotify removed `tracks.total` from playlist items in the API, so
   // we no longer try to show a track count.
   return (data?.items ?? []).map((p: {

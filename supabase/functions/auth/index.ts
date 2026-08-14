@@ -11,7 +11,9 @@ import {
   exchangeCode,
   generateChallenge,
   generateVerifier,
+  getSession,
   randomBase64url,
+  saveTokens,
   siteUrl,
 } from "../_shared/spotify.ts";
 import { handlePreflight, json } from "../_shared/cors.ts";
@@ -28,15 +30,27 @@ Deno.serve(async (req) => {
 
     // ---- /auth/start -----------------------------------------------------
     if (req.method === "GET" && action === "start") {
+      // The visitor's anonymous id (optional for legacy links, required for
+      // multi-user): must look like a random id, not a URL or weird input.
+      const user = url.searchParams.get("user") ?? "";
+      if (user && !/^[A-Za-z0-9_-]{8,128}$/.test(user)) {
+        return json({ error: "invalid_user" }, 400);
+      }
       const verifier = generateVerifier();
       const [challenge, state] = await Promise.all([
         generateChallenge(verifier),
         randomBase64url(32),
       ]);
-      // Verifier must survive across two separate function invocations → Postgres.
+      // Verifier must survive across two separate function invocations →
+      // Postgres. For multi-user, the visitor's id + a fresh session secret
+      // ride along in the same row; the callback hands the secret back to the
+      // browser via a URL fragment (never through Spotify or server logs).
+      const userSecret = randomBase64url(32);
       const { error } = await db.from("pkce_store").upsert({
         state,
         verifier,
+        user_id: user || null,
+        user_secret: userSecret,
         created_at: new Date().toISOString(),
       });
       if (error) throw error;
@@ -58,7 +72,7 @@ Deno.serve(async (req) => {
 
       const { data } = await db
         .from("pkce_store")
-        .select("verifier, created_at")
+        .select("verifier, created_at, user_id, user_secret")
         .eq("state", state)
         .maybeSingle();
       await db.from("pkce_store").delete().eq("state", state); // one-time use
@@ -68,31 +82,54 @@ Deno.serve(async (req) => {
       }
 
       try {
-        await exchangeCode(code, data.verifier);
+        const tokens = await exchangeCode(code, data.verifier);
+        if (data.user_id) {
+          await saveTokens(tokens, { user: data.user_id, secret: data.user_secret });
+        } else {
+          await saveTokens(tokens); // legacy single-user row
+        }
+        const frag = data.user_id
+          ? `#session=${encodeURIComponent(data.user_secret)}`
+          : "";
+        return Response.redirect(`${siteUrl()}/?connected=1${frag}`, 302);
       } catch (e) {
         return Response.redirect(
           `${siteUrl()}/?error=${encodeURIComponent((e as Error).message)}`,
           302,
         );
       }
-      return Response.redirect(`${siteUrl()}/?connected=1`, 302);
     }
 
     // ---- /auth/logout -----------------------------------------------------
-    // Clears the stored Spotify tokens so the site drops back to the connect
-    // screen — a fresh authorize (with current scopes) fixes stale sessions.
+    // Clears the *caller's* stored Spotify tokens so the site drops back to
+    // the connect screen. With an identity this only touches that user's row;
+    // the secret must match or we refuse (a public id alone can't log someone
+    // else out).
     if (req.method === "POST" && action === "logout") {
-      const { error } = await db
-        .from("app_state")
-        .update({
-          refresh_token: null,
-          access_token: null,
-          expires_at: null,
-          scope: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", 1);
-      if (error) throw error;
+      const session = getSession(req);
+      if (session) {
+        const { data } = await db
+          .from("user_tokens")
+          .select("user_secret")
+          .eq("user_id", session.user)
+          .maybeSingle();
+        if (!data || data.user_secret !== session.secret) {
+          return json({ error: "session_invalid" }, 403);
+        }
+        await db.from("user_tokens").delete().eq("user_id", session.user);
+      } else {
+        const { error } = await db
+          .from("app_state")
+          .update({
+            refresh_token: null,
+            access_token: null,
+            expires_at: null,
+            scope: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", 1);
+        if (error) throw error;
+      }
       return json({ ok: true });
     }
 

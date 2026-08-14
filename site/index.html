@@ -680,11 +680,40 @@ const toast = (msg) => {
   toastTimer = setTimeout(() => toastEl.classList.remove("show"), 4000);
 };
 
+// Safe storage access — private browsing can throw on localStorage.
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+
+// Multi-user identity: each browser gets a random anonymous id plus a
+// server-issued secret granted during OAuth (returned only in the #session=
+// fragment). Both go out as headers on every call, so each visitor's Spotify
+// session is isolated from everyone else's. Returns null when storage is
+// blocked — the page then falls back to legacy single-user behavior.
+function getUserId() {
+  let id = store.get("music_player_id");
+  if (!id) {
+    id = (crypto.randomUUID && crypto.randomUUID()) ||
+      Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map((b) => b.toString(16).padStart(2, "0")).join("");
+    store.set("music_player_id", id);
+  }
+  return store.get("music_player_id");
+}
+
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   headers["Authorization"] = "Bearer " + ANON_KEY;
+  const uid = getUserId();
+  if (uid) headers["x-app-user"] = uid;
+  const sec = store.get("music_player_secret");
+  if (sec) headers["x-app-secret"] = sec;
   const res = await fetch(API_BASE + path, { ...opts, headers });
-  if (res.status === 401) return { __unauthorized: true };
+  // 401 = not connected, 403 = session invalid/expired — both land on the
+  // reconnect screen instead of silently mixing sessions.
+  if (res.status === 401 || res.status === 403) return { __unauthorized: true };
   return res.json();
 }
 
@@ -1032,6 +1061,7 @@ seek.addEventListener("pointercancel", () => { seeking = false; });
 logoutBtn.addEventListener("click", async () => {
   toast("Logging out…");
   await api("/auth/logout", { method: "POST" });
+  store.del("music_player_secret");
   location.reload();
 });
 
@@ -1114,7 +1144,7 @@ function renderLikedReconnect() {
     "<span class=\"pl-sub\">Browsing your saved songs needs the <b>user-library-read</b> permission, which this Spotify connection predates. Reconnect to grant it — playback keeps working either way.</span>";
   const reconnect = document.createElement("a");
   reconnect.className = "link-btn";
-  reconnect.href = API_BASE + "/auth/start";
+  reconnect.href = API_BASE + "/auth/start?user=" + encodeURIComponent(getUserId());
   reconnect.textContent = "Reconnect Spotify";
   reconnect.style.cssText =
     "margin-top:0;color:var(--fg);border-color:var(--dim);text-decoration:none;display:inline-block";
@@ -1366,7 +1396,7 @@ function showConnect() {
   whoami.textContent = "";
   const a = document.createElement("a");
   a.className = "connect";
-  a.href = API_BASE + "/auth/start";
+  a.href = API_BASE + "/auth/start?user=" + encodeURIComponent(getUserId());
   a.textContent = "Connect Spotify";
   const old = document.querySelector("a.connect");
   if (old) old.remove();
@@ -1377,6 +1407,12 @@ function showConnect() {
   const q = new URLSearchParams(location.search);
   if (q.get("connected")) toast("Connected to Spotify ✓");
   if (q.get("error")) toast("Auth failed: " + q.get("error"));
+  // The OAuth callback hands the session secret back in a URL fragment —
+  // fragments never leave the browser, so it can't leak via Referer/logs.
+  if (location.hash.startsWith("#session=")) {
+    const sec = decodeURIComponent(location.hash.slice(9));
+    if (sec && sec.length >= 16) store.set("music_player_secret", sec);
+  }
   history.replaceState({}, "", location.pathname);
 
   const t = await api("/player/token");

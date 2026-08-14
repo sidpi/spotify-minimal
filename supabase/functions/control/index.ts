@@ -7,10 +7,13 @@
 //
 // These hit the Spotify Web API, so they work from anywhere (not just the
 // browser tab that owns the SDK). The UI uses the SDK for instant local
-// control; these are the server-side truth.
+// control; these are the server-side truth. Every call acts on the *caller's*
+// session (x-app-user / x-app-secret), so one visitor can't drive another's
+// playback.
 
 import { handlePreflight, json } from "../_shared/cors.ts";
 import {
+  getSession,
   playPlaylist,
   spotifyFetch,
   SpotErr,
@@ -25,21 +28,22 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const action = url.pathname.split("/").filter(Boolean).pop() ?? "";
     if (req.method !== "POST") return json({ error: "POST only" }, 405);
+    const session = getSession(req);
 
     switch (action) {
       case "play": {
         const { device_id, context_uri, offset } = await req.json().catch(() => ({}));
-        await playPlaylist(device_id, context_uri, offset);
+        await playPlaylist(device_id, context_uri, offset, session);
         return json({ ok: true });
       }
       case "pause":
-        await spotifyFetch("/me/player/pause", { method: "PUT" });
+        await spotifyFetch("/me/player/pause", { method: "PUT" }, session);
         return json({ ok: true });
       case "next":
-        await spotifyFetch("/me/player/next", { method: "POST" });
+        await spotifyFetch("/me/player/next", { method: "POST" }, session);
         return json({ ok: true });
       case "previous":
-        await spotifyFetch("/me/player/previous", { method: "POST" });
+        await spotifyFetch("/me/player/previous", { method: "POST" }, session);
         return json({ ok: true });
       default:
         return json({ error: "not found" }, 404);

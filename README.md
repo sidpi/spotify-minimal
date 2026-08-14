@@ -19,6 +19,9 @@ framework, no cost — everything runs on free tiers.
   shuffle, and repeat (off · all · one)
 - **Upcoming queue** — the next tracks peek out when you hover the player;
   click one to jump to it
+- **Multi-user** — every visitor gets their own isolated Spotify session
+  (anonymous id + server-issued secret), so anyone can log in and play
+  without sharing the owner's account
 - **Focus mode** — click the album art to center the player; a button restores
   the two-column layout
 - **Volume popover** — hover the speaker icon next to the seek bar
