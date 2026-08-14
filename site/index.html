@@ -105,8 +105,11 @@
     .controls { gap: 14px; }
     button.icon { min-width: 44px; min-height: 44px; }
     .vol-btn { min-width: 40px; min-height: 40px; padding: 8px; }
+    /* Touch has no hover — the overlay play button stays visible. */
+    .art-play { opacity: 1; translate: 0 0; }
   }
   .art {
+    position: relative;
     width: min(58vw, 240px); height: min(58vw, 240px);
     margin: 0 auto 26px;
     border-radius: 16px; overflow: hidden;
@@ -123,6 +126,10 @@
     width: min(64vw, 340px); height: min(64vw, 340px);
     border-radius: 20px; box-shadow: 0 32px 80px rgba(0,0,0,.6);
   }
+  .art-ph {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%;
+  }
   .art img {
     width: 100%; height: 100%; object-fit: cover;
     animation: artIn .45s ease;
@@ -131,9 +138,67 @@
     from { opacity: 0; transform: scale(.97); }
     to { opacity: 1; transform: none; }
   }
+  /* Circular play/pause button overlaid on the album art — the CodeFronts
+     Spotify-inspired pattern: lifts + fades in on hover/focus, scales on
+     press, stays pinned while playing (body.playing), with equalizer bars.
+     Independent translate + scale keeps the two motions from fighting. */
+  .art-play {
+    position: absolute; right: 10px; bottom: 10px; z-index: 1;
+    display: grid; place-items: center;
+    width: 52px; height: 52px;
+    border: 0; border-radius: 50%;
+    background: var(--accent); color: #000;
+    cursor: pointer;
+    opacity: 0; translate: 0 12px;
+    box-shadow: 0 8px 20px rgba(0,0,0,.5);
+    transition: opacity .28s, translate .28s cubic-bezier(.34,1.4,.5,1), scale .18s;
+  }
+  body.playing .art-play,
+  .art:hover .art-play,
+  .art:focus-within .art-play {
+    opacity: 1; translate: 0 0;
+  }
+  .art-play:disabled { opacity: 0 !important; translate: 0 12px !important; }
+  .art-play:hover { scale: 1.08; }
+  .art-play:active { scale: .94; }
+  .art-play:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+  .art-play svg { display: block; }
+  .art-play .pp-q { display: none; }
+  body.playing .art-play .pp-p { display: none; }
+  body.playing .art-play .pp-q { display: block; }
+  .art-eq {
+    position: absolute; left: 10px; bottom: 14px; z-index: 1;
+    display: flex; align-items: flex-end; gap: 3px;
+    height: 18px; opacity: 0; transition: opacity .3s;
+    pointer-events: none;
+  }
+  .art-eq b {
+    width: 3px; height: 35%; border-radius: 2px;
+    background: var(--accent);
+    animation: artEq .8s ease-in-out infinite alternate;
+    animation-play-state: paused;
+  }
+  .art-eq b:nth-child(2) { animation-delay: -.2s; }
+  .art-eq b:nth-child(3) { animation-delay: -.5s; }
+  .art-eq b:nth-child(4) { animation-delay: -.75s; }
+  body.playing .art-eq { opacity: 1; }
+  body.playing .art-eq b { animation-play-state: running; }
+  @keyframes artEq {
+    from { height: 22%; }
+    to { height: 100%; }
+  }
+  .player-col:has(.art:hover) .title,
+  .player-col:has(.art:focus-within) .title { color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) {
+    .art-play, .art-eq b {
+      transition-duration: .01ms !important;
+      animation: none !important;
+    }
+  }
   .title {
     font-size: 22px; font-weight: 600;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: color .25s;
   }
   .artist { color: var(--dim); margin-top: 6px; font-size: 15px; }
   .seek-row {
@@ -335,7 +400,16 @@
 
 <main>
   <section class="player-col">
-    <div class="art" id="art">♫</div>
+    <div class="art" id="art">
+      <span class="art-ph" id="artPh" aria-hidden="true">♫</span>
+      <span class="art-eq" aria-hidden="true"><b></b><b></b><b></b><b></b></span>
+      <button class="art-play" id="artPlay" type="button" aria-pressed="false" aria-label="Play / pause" disabled>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path class="pp-p" d="M8.6 5.4v13.2L19 12z" fill="currentColor"/>
+          <path class="pp-q" d="M8 5h3.1v14H8zM12.9 5H16v14h-3.1z" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
     <div class="title" id="title">—</div>
     <div class="artist" id="artist">not connected</div>
 
@@ -412,7 +486,8 @@ const ANON_KEY = "sb_publishable_Dp0eF_zbNO15piMwROe1aA_f5JKEp7Z";
 const $ = (id) => document.getElementById(id);
 const title = $("title"), artist = $("artist"), art = $("art"),
       bgArt = $("bg-art"), pos = $("pos"), dur = $("dur"),
-      playBtn = $("play"), prevBtn = $("prev"), nextBtn = $("next"),
+      playBtn = $("play"), artPlay = $("artPlay"), artPh = $("artPh"),
+      prevBtn = $("prev"), nextBtn = $("next"),
       shuffleBtn = $("shuffle"), repeatBtn = $("repeat"),
       volume = $("volume"), volLabel = $("volLabel"),
       seek = $("seek"),
@@ -448,6 +523,7 @@ let currentPlaylist = null; // { id, name, tracks }
 let sdkNext = [];           // upcoming tracks from the SDK's track window
 let playlistOffset = -1;    // index of the last track started in currentPlaylist
 let queueItems = [];        // rendered "up next" items
+let artImg = null;          // the album-art <img>, created on first track
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -485,17 +561,25 @@ async function api(path, opts = {}) {
 function render(track, position, duration, paused) {
   title.textContent = track.name || "—";
   artist.textContent = track.artists || "—";
-  if (track.image && art.dataset.img !== track.image) {
-    art.dataset.img = track.image;
-    art.innerHTML = `<img src="${track.image}" alt="">`;
+  // The album art is replaced in place — the overlay play button and the
+  // equalizer bars live beside the image and must survive every re-render.
+  if (track.image && (!artImg || artImg.src !== track.image)) {
+    if (!artImg) {
+      artImg = document.createElement("img");
+      artImg.alt = "";
+      artPh.replaceChildren(artImg);
+    }
+    artImg.src = track.image;
     bgArt.style.backgroundImage = `url(${track.image})`;
   }
   dur.textContent = fmt(duration);
   updatePos(position, duration);
   playBtn.textContent = paused ? "▶" : "⏸";
+  artPlay.setAttribute("aria-pressed", String(!paused));
+  artPlay.setAttribute("aria-label", paused ? "Play" : "Pause");
   document.body.classList.toggle("playing", !paused);
   playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
-    repeatBtn.disabled = plistBtn.disabled = false;
+    repeatBtn.disabled = plistBtn.disabled = artPlay.disabled = false;
   // Mobile: lock-screen info + keep the screen awake while playing.
   updateMediaSession(track, paused);
   if (paused) releaseWakeLock(); else requestWakeLock();
@@ -694,7 +778,7 @@ function updateMediaSession(track, paused) {
 // ---------------------------------------------------------------------------
 // Controls
 // ---------------------------------------------------------------------------
-playBtn.addEventListener("click", async () => {
+async function togglePlay() {
   log("click: play button");
   try {
     await ensurePlayer();
@@ -728,6 +812,14 @@ playBtn.addEventListener("click", async () => {
     return;
   }
   s.paused ? player.resume() : player.pause();
+}
+
+playBtn.addEventListener("click", togglePlay);
+// The overlay button on the album art drives the same logic; stop the click
+// from also toggling focus mode (the art itself is clickable for that).
+artPlay.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePlay();
 });
 
 prevBtn.addEventListener("click", () => player && player.previousTrack());
@@ -1126,8 +1218,9 @@ likedBtn.addEventListener("click", () => openLiked());
 // Connect flow + boot
 // ---------------------------------------------------------------------------
 function showConnect() {
-  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
-    repeatBtn.disabled = plistBtn.disabled = likedBtn.disabled = daylistBtn.disabled = true;
+  playBtn.disabled = artPlay.disabled = prevBtn.disabled = nextBtn.disabled =
+    shuffleBtn.disabled = repeatBtn.disabled = plistBtn.disabled =
+    likedBtn.disabled = daylistBtn.disabled = true;
   volume.disabled = true;
   seek.disabled = true;
   logoutBtn.hidden = true;
@@ -1177,8 +1270,9 @@ function showConnect() {
   }
   // Lazy SDK init: the player is created inside the first click so the audio
   // element is autoplay-activated. Enable controls now; playback begins on tap.
-  playBtn.disabled = prevBtn.disabled = nextBtn.disabled = shuffleBtn.disabled =
-    repeatBtn.disabled = plistBtn.disabled = likedBtn.disabled = daylistBtn.disabled = false;
+  playBtn.disabled = artPlay.disabled = prevBtn.disabled = nextBtn.disabled =
+    shuffleBtn.disabled = repeatBtn.disabled = plistBtn.disabled =
+    likedBtn.disabled = daylistBtn.disabled = false;
   volume.disabled = false;
   volBtn.textContent = volume.value == 0 ? "🔇" : volume.value < 50 ? "🔈" : "🔊";
   seek.disabled = false;
