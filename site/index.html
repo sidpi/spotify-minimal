@@ -114,8 +114,6 @@
     margin: 0 auto 26px;
     border-radius: 16px; overflow: hidden;
     background: var(--panel);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 64px; color: var(--dim);
     box-shadow: 0 24px 64px rgba(0,0,0,.55);
     cursor: pointer;
     transition: width .5s cubic-bezier(.4,0,.2,1), height .5s cubic-bezier(.4,0,.2,1),
@@ -126,9 +124,33 @@
     width: min(64vw, 340px); height: min(64vw, 340px);
     border-radius: 20px; box-shadow: 0 32px 80px rgba(0,0,0,.6);
   }
+  /* The album art sits on a spinning vinyl — the CodeFronts turntable
+     pattern: the disc spins at a constant rate while playing and freezes
+     exactly where it stopped on pause (animation-play-state), the tonearm
+     swings onto the groove, and the art itself becomes the circular label. */
+  .disc {
+    position: absolute; inset: 3.5%;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    background:
+      repeating-radial-gradient(circle at 50% 50%,
+        oklch(0.15 0.005 260) 0 2px, oklch(0.19 0.008 260) 2px 4px),
+      conic-gradient(from 210deg, transparent 0deg, oklch(1 0 0/.08) 24deg,
+        transparent 60deg, transparent 200deg, oklch(1 0 0/.05) 232deg, transparent 268deg);
+    box-shadow: inset 0 0 0 1px oklch(1 0 0/.06);
+    animation: discSpin 3.6s linear infinite;
+    animation-play-state: paused;
+  }
+  body.playing .disc { animation-play-state: running; }
+  @keyframes discSpin { to { rotate: 360deg; } }
   .art-ph {
+    position: relative; z-index: 1;
+    width: 56%; height: 56%;
+    border-radius: 50%; overflow: hidden;
+    background: var(--panel);
     display: flex; align-items: center; justify-content: center;
-    width: 100%; height: 100%;
+    font-size: 26px; color: var(--dim);
+    box-shadow: 0 0 0 1px oklch(0 0 0/.45), 0 6px 18px oklch(0 0 0/.35);
   }
   .art img {
     width: 100%; height: 100%; object-fit: cover;
@@ -138,6 +160,39 @@
     from { opacity: 0; transform: scale(.97); }
     to { opacity: 1; transform: none; }
   }
+  .spindle {
+    position: absolute; top: 50%; left: 50%;
+    translate: -50% -50%; z-index: 2;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: oklch(0.75 0.01 260);
+    box-shadow: inset 0 -1px 2px oklch(0 0 0/.6), 0 0 0 1px oklch(0 0 0/.35);
+    pointer-events: none;
+  }
+  .arm {
+    position: absolute; top: 14px; right: 12px; z-index: 3;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: linear-gradient(135deg, oklch(0.78 0.01 260), oklch(0.6 0.01 260));
+    box-shadow: 0 0 0 1px oklch(0 0 0/.35), 0 2px 6px oklch(0 0 0/.4);
+    transform-origin: 50% 50%;
+    rotate: -26deg;
+    transition: rotate .7s cubic-bezier(.4,0,.2,1);
+    pointer-events: none;
+  }
+  .arm i {
+    position: absolute; top: 6px; left: 6px;
+    width: 6px; height: 118px; border-radius: 4px;
+    background: linear-gradient(180deg, oklch(0.8 0.01 260), oklch(0.6 0.01 260));
+    transform-origin: top center;
+    rotate: 22deg;
+  }
+  .arm i::after {
+    content: '';
+    position: absolute; bottom: -6px; left: -5px;
+    width: 16px; height: 14px; border-radius: 3px;
+    background: oklch(0.32 0.01 260);
+    box-shadow: 0 2px 4px oklch(0 0 0/.5);
+  }
+  body.playing .arm { rotate: 6deg; }
   /* Circular play/pause button overlaid on the album art — the CodeFronts
      Spotify-inspired pattern: lifts + fades in on hover/focus, scales on
      press, stays pinned while playing (body.playing), with equalizer bars.
@@ -190,7 +245,7 @@
   .player-col:has(.art:hover) .title,
   .player-col:has(.art:focus-within) .title { color: var(--accent); }
   @media (prefers-reduced-motion: reduce) {
-    .art-play, .art-eq b {
+    .art-play, .art-eq b, .disc, .arm {
       transition-duration: .01ms !important;
       animation: none !important;
     }
@@ -218,30 +273,46 @@
     display: flex; align-items: center; justify-content: center;
     gap: 30px; margin: 28px 0 0;
   }
+  /* Shared button language — every control gets the same silhouette and
+     motion: lift on hover, press scale, and one consistent focus ring, so
+     nothing in the UI feels foreign. */
+  :where(button, a, [role="button"]) { -webkit-tap-highlight-color: transparent; }
+  :where(button, a, [role="button"]):focus-visible {
+    outline: 3px solid var(--fg); outline-offset: 3px;
+  }
   button.icon {
     background: none; border: none; color: var(--fg);
-    font-size: 20px; cursor: pointer; line-height: 1; transition: color .15s;
+    font-size: 20px; cursor: pointer; line-height: 1;
+    transition: transform .18s cubic-bezier(.34,1.4,.5,1), color .15s;
   }
-  button.icon:active { opacity: .6; }
-  button.icon:disabled { opacity: .35; cursor: default; }
+  button.icon:hover { color: var(--accent); }
+  button.icon:active { transform: scale(.88); opacity: .8; }
   button.icon.on { color: var(--accent); }
+  button.icon:disabled {
+    opacity: .35; cursor: default; transform: none; color: var(--fg);
+  }
   button.big {
     width: 64px; height: 64px; border-radius: 50%;
     background: var(--accent); color: #000; border: none;
     font-size: 26px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    transition: transform .1s ease;
+    box-shadow: 0 8px 20px rgba(0,0,0,.4);
+    transition: transform .22s cubic-bezier(.34,1.4,.5,1), background .25s, box-shadow .25s;
   }
-  button.big:active { transform: scale(.93); }
-  button.big:disabled { background: var(--border); color: var(--dim); cursor: default; }
+  button.big:hover { transform: translateY(-2px) scale(1.05); box-shadow: 0 12px 26px rgba(0,0,0,.5); }
+  button.big:active { transform: scale(.93); box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+  button.big:disabled {
+    background: var(--border); color: var(--dim); cursor: default;
+    transform: none; box-shadow: none;
+  }
   .vol-wrap { position: relative; display: inline-block; }
   .vol-btn {
     background: none; border: none; color: var(--dim);
     font-size: 15px; cursor: pointer; line-height: 1; padding: 6px;
-    transition: color .15s, transform .1s ease;
+    transition: color .15s, transform .18s cubic-bezier(.34,1.4,.5,1);
   }
-  .vol-btn:hover { color: var(--fg); }
-  .vol-btn:active { transform: scale(.92); }
+  .vol-btn:hover { color: var(--fg); transform: translateY(-2px); }
+  .vol-btn:active { transform: scale(.9); }
   .vol-pop {
     position: absolute; top: calc(100% + 10px); left: 50%;
     transform: translate(-50%, -6px);
@@ -261,16 +332,24 @@
     transform: translate(-50%, 0);
   }
   .link-btn {
-    background: none; border: 1px solid var(--border); color: var(--dim);
-    border-radius: 999px; padding: 8px 18px; font-size: 13px; cursor: pointer;
+    background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.14);
+    color: var(--fg); font-weight: 500;
+    border-radius: 999px; padding: 9px 18px; font-size: 13px; cursor: pointer;
     margin-top: 18px;
+    transition: transform .22s cubic-bezier(.34,1.4,.5,1), background .25s,
+                color .15s, border-color .2s;
   }
   .quick-links {
     display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px;
   }
   .quick-links .link-btn { margin-top: 0; }
-  .link-btn:hover { color: var(--fg); border-color: var(--dim); }
-  .link-btn:disabled { opacity: .4; cursor: default; }
+  .link-btn:hover {
+    background: rgba(255,255,255,.12); border-color: var(--dim);
+    transform: translateY(-2px);
+  }
+  .link-btn:active { transform: scale(.96); }
+  .link-btn:disabled { opacity: .4; cursor: default; transform: none; }
   .player-foot {
     position: fixed; z-index: 4;
     top: calc(14px + env(safe-area-inset-top));
@@ -392,7 +471,15 @@
     display: inline-block; margin-top: 18px; padding: 12px 28px;
     background: var(--accent); color: #000; border-radius: 999px;
     text-decoration: none; font-weight: 600; font-size: 15px;
+    box-shadow: 0 8px 20px rgba(0,0,0,.35);
+    transition: transform .22s cubic-bezier(.34,1.4,.5,1), background .25s, box-shadow .25s;
   }
+  a.connect:hover {
+    background: #1fea67;
+    transform: translateY(-2px);
+    box-shadow: 0 12px 26px rgba(0,0,0,.45);
+  }
+  a.connect:active { transform: scale(.96); }
 </style>
 </head>
 <body>
@@ -401,7 +488,11 @@
 <main>
   <section class="player-col">
     <div class="art" id="art">
-      <span class="art-ph" id="artPh" aria-hidden="true">♫</span>
+      <div class="disc">
+        <span class="art-ph" id="artPh" aria-hidden="true">♫</span>
+        <span class="spindle" aria-hidden="true"></span>
+      </div>
+      <span class="arm" aria-hidden="true"><i></i></span>
       <span class="art-eq" aria-hidden="true"><b></b><b></b><b></b><b></b></span>
       <button class="art-play" id="artPlay" type="button" aria-pressed="false" aria-label="Play / pause" disabled>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
