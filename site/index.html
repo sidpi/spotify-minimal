@@ -1415,7 +1415,15 @@ function showConnect() {
   }
   history.replaceState({}, "", location.pathname);
 
-  const t = await api("/player/token");
+  // A network/CORS failure must never leave the page dead — treat it like
+  // "not connected" so the Connect button always renders.
+  let t;
+  try {
+    t = await api("/player/token");
+  } catch (e) {
+    log("boot: token fetch failed:", (e && e.message) || e);
+    t = { __unauthorized: true };
+  }
   log("boot: token", t.__unauthorized ? "UNAUTHORIZED" : "ok", "scopes:", t.scopes);
   if (t.__unauthorized) {
     setStatus("Not connected", true);
